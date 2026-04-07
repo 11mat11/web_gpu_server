@@ -1,0 +1,80 @@
+import Fastify from 'fastify'
+import cors from '@fastify/cors'
+import swagger from '@fastify/swagger'
+import swaggerUi from '@fastify/swagger-ui'
+
+import { healthRoute } from './routes/health.js'
+import { gpuInfoRoute } from './routes/gpu-info.js'
+import { gpuStressRoute } from './routes/gpu-stress.js'
+import { imageRoute } from './routes/image.js'
+import { matrixRoute } from './routes/matrix.js'
+import { benchmarkRoute } from './routes/benchmark.js'
+
+const DEFAULT_REQUEST_TIMEOUT_MS = 60 * 60 * 1000
+
+function getRequestTimeoutMs(): number {
+  const raw = process.env.SERVER_REQUEST_TIMEOUT_MS
+  if (!raw) return DEFAULT_REQUEST_TIMEOUT_MS
+
+  const parsed = Number(raw)
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    console.warn(
+      `[Server] Invalid SERVER_REQUEST_TIMEOUT_MS="${raw}". Falling back to ${DEFAULT_REQUEST_TIMEOUT_MS} ms.`,
+    )
+    return DEFAULT_REQUEST_TIMEOUT_MS
+  }
+
+  return Math.floor(parsed)
+}
+
+export async function buildServer() {
+  const requestTimeoutMs = getRequestTimeoutMs()
+
+  const server = Fastify({
+    requestTimeout: requestTimeoutMs,
+    logger: {
+      transport:
+          process.env.NODE_ENV === 'development'
+              ? { target: 'pino-pretty', options: { colorize: true } }
+              : undefined,
+    },
+  })
+
+  // ─── Plugins ────────────────────────────────────────────────────────────────
+  await server.register(cors, {
+    origin: true,
+    methods: ['GET', 'POST', 'DELETE'],
+  })
+
+  await server.register(swagger, {
+    openapi: {
+      openapi: '3.0.0',
+      info: {
+        title: 'WebGPU Thesis API',
+        description: 'REST API for WebGPU vs CUDA benchmark server',
+        version: '0.1.0',
+      },
+      tags: [
+        { name: 'system', description: 'Server & GPU diagnostics' },
+        { name: 'image', description: 'Image processing (filters)' },
+        { name: 'matrix', description: 'Matrix operations' },
+        { name: 'benchmark', description: 'Benchmark runner & results' },
+      ],
+    },
+  })
+
+  await server.register(swaggerUi, {
+    routePrefix: '/docs',
+    uiConfig: { docExpansion: 'list' },
+  })
+
+  // ─── Routes ─────────────────────────────────────────────────────────────────
+  await server.register(healthRoute)
+  await server.register(gpuInfoRoute,    { prefix: '/gpu' })
+  await server.register(gpuStressRoute,  { prefix: '/gpu/stress' })
+  await server.register(imageRoute,      { prefix: '/image' })
+  await server.register(matrixRoute,     { prefix: '/matrix' })
+  await server.register(benchmarkRoute,  { prefix: '/benchmark' })
+
+  return server
+}
