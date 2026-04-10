@@ -20,13 +20,51 @@ interface WebGpuModule {
   globals: Record<string, unknown>
 }
 
-function getRequiredDeviceLimits(adapter: GPUAdapter): GPUDeviceDescriptor['requiredLimits'] {
-  return {
+export function getRequiredDeviceLimits(adapter: GPUAdapter): GPUDeviceDescriptor['requiredLimits'] {
+  // Pobieramy limity pamięciowe
+  const limits: Record<string, number> = {
     maxBufferSize: adapter.limits.maxBufferSize,
     maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
+  };
+
+  // Kluczowe dla GPGPU: Pobieramy maksymalne limity dla Compute Shaders
+  const computeLimits = [
+    'maxComputeWorkgroupStorageSize',  // Rozmiar pamięci współdzielonej (Shared Memory)
+    'maxComputeInvocationsPerWorkgroup', // Max wątków w bloku
+    'maxComputeWorkgroupSizeX',        // Max wymiar X siatki wewnątrz grupy
+    'maxComputeWorkgroupSizeY',        // Max wymiar Y
+    'maxComputeWorkgroupSizeZ',        // Max wymiar Z
+  ] as const;
+
+  for (const key of computeLimits) {
+    if (adapter.limits[key]) {
+      limits[key] = adapter.limits[key];
+    }
   }
+
+  return limits;
 }
 
+export function serializeGpuLimits(limits: GPUSupportedLimits): Record<string, number> {
+  const source = limits as unknown as Record<string, unknown>
+  const keys = new Set<string>(Object.keys(source))
+  const proto = Object.getPrototypeOf(source)
+
+  // In webgpu, many limits are exposed as prototype getters instead of own enumerable fields.
+  if (proto) {
+    for (const key of Object.getOwnPropertyNames(proto)) {
+      if (key !== 'constructor') keys.add(key)
+    }
+  }
+
+  const serialized: Record<string, number> = {}
+  for (const key of keys) {
+    const value = source[key]
+    if (typeof value === 'number') serialized[key] = value
+  }
+
+  return serialized
+}
 async function bootstrap(): Promise<GPU> {
   if (_gpu) return _gpu
 

@@ -236,16 +236,20 @@ export async function matrixRoute(server: FastifyInstance) {
 
           if (byteLength > gpu.limits.maxBufferSize || byteLength > gpu.limits.maxStorageBufferBindingSize) {
             console.warn(
-              `[Matrix] size=${body.size} exceeds GPU buffer limits, falling back to CPU for correctness.`,
+                `[Matrix] size=${body.size} exceeds GPU buffer limits, falling back to CPU for correctness.`,
             )
             effectiveBackend = 'cpu'
             matrixC = multiplySquareMatricesCpu(body.size, matrixA!, matrixB!)
           } else {
-            matrixC = (await multiplySquareMatricesWebGpu(body.size, matrixA!, matrixB!, { readback: true }))!
+            // POPRAWKA TUTAJ: Rozpakowujemy obiekt { output } z powrotem do zmiennej matrixC
+            const result = await multiplySquareMatricesWebGpu(body.size, matrixA!, matrixB!, { readback: true })
+            if (!result.output) {
+              throw new Error("WebGPU returned null output despite readback: true")
+            }
+            matrixC = result.output
           }
         } else {
-          matrixC =
-            multiplySquareMatricesCpu(body.size, matrixA!, matrixB!)
+          matrixC = multiplySquareMatricesCpu(body.size, matrixA!, matrixB!)
         }
       } catch (err) {
         return reply.code(500).send({

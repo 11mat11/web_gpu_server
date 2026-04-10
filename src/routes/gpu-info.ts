@@ -1,5 +1,11 @@
 import type { FastifyInstance } from 'fastify'
-import { getGpuAdapter, getGpuDevice, getAdapterInfo } from '../gpu/device.js'
+import {
+  getGpuAdapter,
+  getGpuDevice,
+  getAdapterInfo,
+  getRequiredDeviceLimits,
+  serializeGpuLimits,
+} from '../gpu/device.js'
 
 export async function gpuInfoRoute(server: FastifyInstance) {
   // ─── GET /gpu/info ────────────────────────────────────────────────────────
@@ -19,7 +25,8 @@ export async function gpuInfoRoute(server: FastifyInstance) {
                 description:   { type: 'string' },
                 deviceId:      { type: 'number' },
                 features:      { type: 'array', items: { type: 'string' } },
-                limits:        { type: 'object' },
+                requiredLimits:{ type: 'object', additionalProperties: { type: 'number' } },
+                limits:        { type: 'object', additionalProperties: { type: 'number' } },
               },
             },
           },
@@ -36,30 +43,17 @@ export async function gpuInfoRoute(server: FastifyInstance) {
             description: 'No GPU adapter found on this machine',
             deviceId: 0,
             features: [],
+            requiredLimits: {},
             limits: {},
           })
         }
 
         const info     = await getAdapterInfo(adapter)
         const features = [...adapter.features].map(String)
+        const requiredLimits = getRequiredDeviceLimits(adapter)
 
-        // GPUSupportedLimits is a class instance — manually extract into a plain object
         const device = await getGpuDevice()
-        const l = device.limits
-        const limitKeys = [
-          'maxTextureDimension1D', 'maxTextureDimension2D', 'maxTextureDimension3D',
-          'maxTextureArrayLayers', 'maxBufferSize',
-          'maxUniformBufferBindingSize', 'maxStorageBufferBindingSize',
-          'maxComputeWorkgroupSizeX', 'maxComputeWorkgroupSizeY', 'maxComputeWorkgroupSizeZ',
-          'maxComputeInvocationsPerWorkgroup', 'maxComputeWorkgroupsPerDimension',
-          'maxComputeWorkgroupStorageSize', 'maxBindGroups', 'maxBindingsPerBindGroup',
-          'maxVertexBuffers', 'maxVertexAttributes',
-        ] as const
-        const limits: Record<string, number> = {}
-        for (const key of limitKeys) {
-          const val = (l as unknown as Record<string, unknown>)[key]
-          if (typeof val === 'number') limits[key] = val
-        }
+        const limits = serializeGpuLimits(device.limits)
 
         return reply.send({
           available:    true,
@@ -68,6 +62,7 @@ export async function gpuInfoRoute(server: FastifyInstance) {
           description:  info.description,
           deviceId:     info.deviceId,
           features,
+          requiredLimits,
           limits,
         })
       },
