@@ -105,6 +105,31 @@ function getRequiredDeviceFeatures(adapter: GPUAdapter): GPUFeatureName[] {
  * Returns the (cached) GPUAdapter.
  * Returns null on soft failure — /gpu/info uses this to avoid 500.
  */
+export function getRequiredDeviceLimits(adapter: GPUAdapter): GPUDeviceDescriptor['requiredLimits'] {
+  const limits: Record<string, number> = {
+    // Kluczowe dla dużych macierzy (> 256 MB)
+    maxBufferSize: adapter.limits.maxBufferSize,
+    maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
+  };
+
+  // Kluczowe dla wydajności GPGPU
+  const computeLimits = [
+    'maxComputeWorkgroupStorageSize',
+    'maxComputeInvocationsPerWorkgroup',
+    'maxComputeWorkgroupSizeX',
+    'maxComputeWorkgroupSizeY',
+    'maxComputeWorkgroupSizeZ',
+  ] as const;
+
+  for (const key of computeLimits) {
+    if (adapter.limits[key]) {
+      limits[key] = adapter.limits[key];
+    }
+  }
+
+  return limits;
+}
+
 export async function getGpuAdapter(): Promise<GPUAdapter | null> {
   if (_initialized) return _adapter
 
@@ -139,6 +164,7 @@ export async function getGpuDevice(): Promise<GPUDevice> {
   _device = await adapter.requestDevice({
     label: 'thesis-device',
     ...(requiredFeatures.length ? { requiredFeatures } : {}),
+    requiredLimits: getRequiredDeviceLimits(adapter), // <--- PRZYWRÓCONE!
   })
 
   _device.lost.then((info) => {
@@ -163,6 +189,7 @@ export async function createDedicatedGpuDevice(label = 'thesis-dedicated-device'
     const device = await adapter.requestDevice({
       label,
       ...(requiredFeatures.length ? { requiredFeatures } : {}),
+      requiredLimits: getRequiredDeviceLimits(adapter),
     })
 
     device.lost.then((info) => {

@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { z } from 'zod'
-import { createDedicatedGpuDevice } from '../gpu/device.js'
+import { getGpuDevice } from '../gpu/device.js'
 
 // ─── Job store ────────────────────────────────────────────────────────────────
 
@@ -20,7 +20,6 @@ interface StressJob {
 
 const activeBuffers = new Map<string, GPUBuffer[]>()
 const activeJobs    = new Map<string, StressJob>()
-const activeDevices = new Map<string, GPUDevice>()
 const activeTimers  = new Map<string, ReturnType<typeof setTimeout>>()
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -70,14 +69,6 @@ function getStressTouchShaderSource(): Promise<string> {
   return stressTouchShaderSourcePromise
 }
 
-function destroyDeviceSafe(device: GPUDevice): void {
-  try {
-    ;(device as GPUDevice & { destroy?: () => void }).destroy?.()
-  } catch {
-    /* ignore */
-  }
-}
-
 function releaseJob(id: string): boolean {
   const timer = activeTimers.get(id)
   if (timer) {
@@ -86,17 +77,11 @@ function releaseJob(id: string): boolean {
   }
 
   const bufs = activeBuffers.get(id)
-  const device = activeDevices.get(id)
-  if (!bufs && !device) return false
+  if (!bufs) return false
 
   if (bufs) {
     bufs.forEach(b => { try { b.destroy() } catch { /* already destroyed */ } })
     activeBuffers.delete(id)
-  }
-
-  if (device) {
-    destroyDeviceSafe(device)
-    activeDevices.delete(id)
   }
 
   const job = activeJobs.get(id)
@@ -281,7 +266,7 @@ export async function gpuStressRoute(server: FastifyInstance) {
 
         let device: GPUDevice
         try {
-          device = await createDedicatedGpuDevice(`stress-device-${id}`)
+          device = await getGpuDevice()
         } catch (err) {
           reply.statusCode = 500
           return reply.send({ error: 'no_gpu', message: String(err) })
@@ -311,7 +296,6 @@ export async function gpuStressRoute(server: FastifyInstance) {
           }
         } catch (err) {
           buffers.forEach((b) => { try { b.destroy() } catch { /* already destroyed */ } })
-          destroyDeviceSafe(device)
           reply.statusCode = 500
           return reply.send({
             error: 'touch_failed',
@@ -340,7 +324,6 @@ export async function gpuStressRoute(server: FastifyInstance) {
 
         if (buffers.length > 0) {
           activeBuffers.set(id, buffers)
-          activeDevices.set(id, device)
 
           const timer = setTimeout(() => {
             const released = releaseJob(id)
@@ -349,8 +332,6 @@ export async function gpuStressRoute(server: FastifyInstance) {
             }
           }, body.durationSec * 1000)
           activeTimers.set(id, timer)
-        } else {
-          destroyDeviceSafe(device)
         }
 
         if (buffers.length > 0) {
