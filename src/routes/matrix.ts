@@ -141,7 +141,8 @@ export async function matrixRoute(server: FastifyInstance) {
                 backend: 'webgpu',
                 size: 3,
                 inputMode: 'custom',
-                durationMs: 0.123,
+                serverDurationMs: 0.456,
+                gpuDurationMs: 0.123,
                 gflops: 0,
                 matrixC: [
                   [30, 24, 18],
@@ -153,7 +154,8 @@ export async function matrixRoute(server: FastifyInstance) {
                 backend: 'webgpu',
                 size: 256,
                 inputMode: 'random',
-                durationMs: 12.345,
+                serverDurationMs: 12.345,
+                gpuDurationMs: 9.876,
                 gflops: 2.7,
               },
             ],
@@ -161,7 +163,8 @@ export async function matrixRoute(server: FastifyInstance) {
               backend: { type: 'string' },
               size: { type: 'number' },
               inputMode: { type: 'string' },
-              durationMs: { type: 'number' },
+              serverDurationMs: { type: 'number' },
+              gpuDurationMs: { type: 'number', nullable: true },
               gflops: { type: 'number' },
               matrixC: {
                 type: 'array',
@@ -191,6 +194,7 @@ export async function matrixRoute(server: FastifyInstance) {
       },
     },
     async (req, reply) => {
+      const serverStart = performance.now()
       const body = MatrixBodySchema.parse(req.body)
 
       if (body.backend === 'cuda') {
@@ -225,9 +229,10 @@ export async function matrixRoute(server: FastifyInstance) {
         matrixB = randomMatrix(body.size, body.randomMin, body.randomMax)
       }
 
-      const start = performance.now()
+      const computeStart = performance.now()
       let matrixC: Float32Array
       let effectiveBackend: 'webgpu' | 'cpu' = body.backend === 'cpu' ? 'cpu' : 'webgpu'
+      let gpuDurationMs: number | null = null
 
       try {
         if (body.backend === 'webgpu') {
@@ -247,6 +252,7 @@ export async function matrixRoute(server: FastifyInstance) {
               throw new Error("WebGPU returned null output despite readback: true")
             }
             matrixC = result.output
+            gpuDurationMs = result.gpuDurationMs
           }
         } else {
           matrixC = multiplySquareMatricesCpu(body.size, matrixA!, matrixB!)
@@ -258,22 +264,26 @@ export async function matrixRoute(server: FastifyInstance) {
         })
       }
 
-      const durationMs = performance.now() - start
+      const computeDurationMs = performance.now() - computeStart
+      const serverDurationMs = performance.now() - serverStart
       const ops = 2 * body.size ** 3
-      const gflops = ops / (durationMs / 1000) / 1e9
+      const gflopsBaseMs = gpuDurationMs ?? computeDurationMs
+      const gflops = gflopsBaseMs > 0 ? ops / (gflopsBaseMs / 1000) / 1e9 : 0
 
       const response: {
         backend: 'webgpu' | 'cpu'
         size: number
         inputMode: 'random' | 'custom'
-        durationMs: number
+        serverDurationMs: number
+        gpuDurationMs: number | null
         gflops: number
         matrixC?: number[][]
       } = {
         backend: effectiveBackend,
         size: body.size,
         inputMode: body.inputMode,
-        durationMs: Number(durationMs.toFixed(3)),
+        serverDurationMs: Number(serverDurationMs.toFixed(3)),
+        gpuDurationMs: gpuDurationMs === null ? null : Number(gpuDurationMs.toFixed(3)),
         gflops: Number(gflops.toFixed(2)),
       }
 

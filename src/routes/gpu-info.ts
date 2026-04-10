@@ -3,7 +3,6 @@ import {
   getGpuAdapter,
   getGpuDevice,
   getAdapterInfo,
-  getRequiredDeviceLimits,
   serializeGpuLimits,
 } from '../gpu/device.js'
 
@@ -24,8 +23,10 @@ export async function gpuInfoRoute(server: FastifyInstance) {
                 architecture:  { type: 'string' },
                 description:   { type: 'string' },
                 deviceId:      { type: 'number' },
+                backend:       { type: 'string' },
+                deviceType:    { type: 'string' },
+                driver:        { type: 'string' },
                 features:      { type: 'array', items: { type: 'string' } },
-                requiredLimits:{ type: 'object', additionalProperties: { type: 'number' } },
                 limits:        { type: 'object', additionalProperties: { type: 'number' } },
               },
             },
@@ -42,15 +43,16 @@ export async function gpuInfoRoute(server: FastifyInstance) {
             architecture: 'none',
             description: 'No GPU adapter found on this machine',
             deviceId: 0,
+            backend: 'none',
+            deviceType: 'none',
+            driver: 'none',
             features: [],
-            requiredLimits: {},
             limits: {},
           })
         }
 
         const info     = await getAdapterInfo(adapter)
         const features = [...adapter.features].map(String)
-        const requiredLimits = getRequiredDeviceLimits(adapter)
 
         const device = await getGpuDevice()
         const limits = serializeGpuLimits(device.limits)
@@ -61,8 +63,10 @@ export async function gpuInfoRoute(server: FastifyInstance) {
           architecture: info.architecture,
           description:  info.description,
           deviceId:     info.deviceId,
+          backend:      info.backendType,
+          deviceType:   info.deviceType,
+          driver:       info.driver,
           features,
-          requiredLimits,
           limits,
         })
       },

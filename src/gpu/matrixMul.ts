@@ -41,7 +41,7 @@ export async function multiplySquareMatricesWebGpu(
     matrixA: Float32Array,
     matrixB: Float32Array,
     options: MatrixMulWebGpuOptions = {},
-): Promise<{ output: Float32Array | null }> {
+): Promise<{ output: Float32Array | null; gpuDurationMs: number | null }> {
 
     const expectedLength = size * size
     if (matrixA.length !== expectedLength || matrixB.length !== expectedLength) {
@@ -91,6 +91,29 @@ export async function multiplySquareMatricesWebGpu(
         })
         : null
 
+    const supportsTimestampQuery = device.features.has('timestamp-query' as GPUFeatureName)
+    const querySet = supportsTimestampQuery
+        ? device.createQuerySet({
+            label: 'matrix-mul-timestamps',
+            type: 'timestamp',
+            count: 2,
+        })
+        : null
+    const queryResolveBuffer = querySet
+        ? device.createBuffer({
+            label: 'matrix-mul-query-resolve',
+            size: 16,
+            usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC,
+        })
+        : null
+    const queryReadbackBuffer = querySet
+        ? device.createBuffer({
+            label: 'matrix-mul-query-readback',
+            size: 16,
+            usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+        })
+        : null
+
     try {
         // 1. Transfer danych na GPU (Host -> Device)
         device.queue.writeBuffer(dimsBuffer, 0, dims)
@@ -109,7 +132,18 @@ export async function multiplySquareMatricesWebGpu(
         })
 
         const encoder = device.createCommandEncoder({ label: 'matrix-mul-encoder' })
-        const pass = encoder.beginComputePass({ label: 'matrix-mul-pass' })
+        const pass = encoder.beginComputePass({
+            label: 'matrix-mul-pass',
+            ...(querySet
+                ? {
+                    timestampWrites: {
+                        querySet,
+                        beginningOfPassWriteIndex: 0,
+                        endOfPassWriteIndex: 1,
+                    },
+                }
+                : {}),
+        })
         pass.setPipeline(pipeline)
         pass.setBindGroup(0, bindGroup)
 
@@ -122,21 +156,47 @@ export async function multiplySquareMatricesWebGpu(
             encoder.copyBufferToBuffer(matrixCBuffer, 0, readbackBuffer, 0, outputByteLength)
         }
 
+        if (querySet && queryResolveBuffer && queryReadbackBuffer) {
+            encoder.resolveQuerySet(querySet, 0, 2, queryResolveBuffer, 0)
+            encoder.copyBufferToBuffer(queryResolveBuffer, 0, queryReadbackBuffer, 0, 16)
+        }
+
         // 2. Wykonanie i synchronizacja
         device.queue.submit([encoder.finish()])
 
-        if (!readbackBuffer) {
+        if (!readbackBuffer && !queryReadbackBuffer) {
             await device.queue.onSubmittedWorkDone()
-            return { output: null }
+            return { output: null, gpuDurationMs: null }
         }
 
-        // 3. Transfer danych z powrotem (Device -> Host)
-        await readbackBuffer.mapAsync(GPUMapMode.READ)
-        const mapped = readbackBuffer.getMappedRange()
-        const output = new Float32Array(mapped.slice(0))
-        readbackBuffer.unmap()
+        const pendingMaps: Promise<void>[] = []
+        if (readbackBuffer) {
+            pendingMaps.push(readbackBuffer.mapAsync(GPUMapMode.READ))
+        }
+        if (queryReadbackBuffer) {
+            pendingMaps.push(queryReadbackBuffer.mapAsync(GPUMapMode.READ))
+        }
+        await Promise.all(pendingMaps)
 
-        return { output }
+        let output: Float32Array | null = null
+        if (readbackBuffer) {
+            const mapped = readbackBuffer.getMappedRange()
+            output = new Float32Array(mapped.slice(0))
+            readbackBuffer.unmap()
+        }
+
+        let gpuDurationMs: number | null = null
+        if (queryReadbackBuffer) {
+            const mappedQuery = queryReadbackBuffer.getMappedRange()
+            const timestamps = new BigInt64Array(mappedQuery.slice(0))
+            const deltaNs = timestamps[1] - timestamps[0]
+            if (deltaNs > 0n) {
+                gpuDurationMs = Number(deltaNs) / 1e6
+            }
+            queryReadbackBuffer.unmap()
+        }
+
+        return { output, gpuDurationMs }
 
     } finally {
         // Rygorystyczne czyszczenie pamięci
@@ -145,5 +205,8 @@ export async function multiplySquareMatricesWebGpu(
         matrixBBuffer.destroy()
         matrixCBuffer.destroy()
         if (readbackBuffer) readbackBuffer.destroy()
+        if (queryResolveBuffer) queryResolveBuffer.destroy()
+        if (queryReadbackBuffer) queryReadbackBuffer.destroy()
+        if (querySet) querySet.destroy()
     }
 }

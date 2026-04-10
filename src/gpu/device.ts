@@ -20,31 +20,6 @@ interface WebGpuModule {
   globals: Record<string, unknown>
 }
 
-export function getRequiredDeviceLimits(adapter: GPUAdapter): GPUDeviceDescriptor['requiredLimits'] {
-  // Pobieramy limity pamięciowe
-  const limits: Record<string, number> = {
-    maxBufferSize: adapter.limits.maxBufferSize,
-    maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
-  };
-
-  // Kluczowe dla GPGPU: Pobieramy maksymalne limity dla Compute Shaders
-  const computeLimits = [
-    'maxComputeWorkgroupStorageSize',  // Rozmiar pamięci współdzielonej (Shared Memory)
-    'maxComputeInvocationsPerWorkgroup', // Max wątków w bloku
-    'maxComputeWorkgroupSizeX',        // Max wymiar X siatki wewnątrz grupy
-    'maxComputeWorkgroupSizeY',        // Max wymiar Y
-    'maxComputeWorkgroupSizeZ',        // Max wymiar Z
-  ] as const;
-
-  for (const key of computeLimits) {
-    if (adapter.limits[key]) {
-      limits[key] = adapter.limits[key];
-    }
-  }
-
-  return limits;
-}
-
 export function serializeGpuLimits(limits: GPUSupportedLimits): Record<string, number> {
   const source = limits as unknown as Record<string, unknown>
   const keys = new Set<string>(Object.keys(source))
@@ -85,6 +60,9 @@ export interface AdapterInfo {
   architecture: string
   description:  string
   deviceId:     number
+  backendType:  string
+  deviceType:   string
+  driver:       string
 }
 
 /**
@@ -104,7 +82,21 @@ export async function getAdapterInfo(adapter: GPUAdapter): Promise<AdapterInfo> 
     architecture: String(raw.architecture ?? 'unknown'),
     description:  String(raw.description  ?? 'unknown'),
     deviceId:     Number(raw.deviceId     ?? 0),
+    backendType:  String(raw.backendType  ?? 'unknown'),
+    deviceType:   String(raw.deviceType   ?? 'unknown'),
+    driver:       String(raw.driver       ?? 'unknown'),
   }
+}
+
+function getRequiredDeviceFeatures(adapter: GPUAdapter): GPUFeatureName[] {
+  const requiredFeatures: GPUFeatureName[] = []
+  const timestampFeature = 'timestamp-query' as GPUFeatureName
+
+  if (adapter.features.has(timestampFeature)) {
+    requiredFeatures.push(timestampFeature)
+  }
+
+  return requiredFeatures
 }
 
 // ─── Adapter ──────────────────────────────────────────────────────────────────
@@ -143,9 +135,10 @@ export async function getGpuDevice(): Promise<GPUDevice> {
   const adapter = await getGpuAdapter()
   if (!adapter) throw new Error('No WebGPU adapter found on this machine.')
 
+  const requiredFeatures = getRequiredDeviceFeatures(adapter)
   _device = await adapter.requestDevice({
     label: 'thesis-device',
-    requiredLimits: getRequiredDeviceLimits(adapter),
+    ...(requiredFeatures.length ? { requiredFeatures } : {}),
   })
 
   _device.lost.then((info) => {
@@ -166,9 +159,10 @@ export async function createDedicatedGpuDevice(label = 'thesis-dedicated-device'
 
   try {
     console.log(`[GPU] Creating dedicated device: "${label}"...`)
+    const requiredFeatures = getRequiredDeviceFeatures(adapter)
     const device = await adapter.requestDevice({
       label,
-      requiredLimits: getRequiredDeviceLimits(adapter),
+      ...(requiredFeatures.length ? { requiredFeatures } : {}),
     })
 
     device.lost.then((info) => {
