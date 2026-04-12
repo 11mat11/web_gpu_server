@@ -5,17 +5,20 @@ const WORKGROUP_SIZE = 16
 const RANDOM_FILL_WORKGROUP_SIZE = 256
 
 const matrixMulShaderSource = readFileSync(new URL('./shaders/matrixMul.wgsl', import.meta.url), 'utf8')
+const matrixMulTiledShaderSource = readFileSync(new URL('./shaders/matrixMulTiled.wgsl', import.meta.url), 'utf8')
 const randomFillShaderSource = readFileSync(new URL('./shaders/randomFill.wgsl', import.meta.url), 'utf8')
 
 type TimingSource = 'gpu-timestamp' | 'cpu-clock'
 
 export interface MatrixMulWebGpuOptions {
   readback?: boolean
+  optimized?: boolean
 }
 
 export interface RandomGpuMatrixMulOptions {
   readback?: boolean
   seed?: number
+  optimized?: boolean
 }
 
 export interface MatrixGpuTimings {
@@ -38,6 +41,7 @@ export interface MatrixMulWebGpuResult extends MatrixGpuTimings {
 }
 
 const matrixMulPipelineCache = new WeakMap<GPUDevice, GPUComputePipeline>()
+const matrixMulTiledPipelineCache = new WeakMap<GPUDevice, GPUComputePipeline>()
 const randomFillPipelineCache = new WeakMap<GPUDevice, GPUComputePipeline>()
 
 function getMatrixMulPipeline(device: GPUDevice): GPUComputePipeline {
@@ -81,6 +85,28 @@ function getRandomFillPipeline(device: GPUDevice): GPUComputePipeline {
   })
 
   randomFillPipelineCache.set(device, pipeline)
+  return pipeline
+}
+
+function getMatrixMulTiledPipeline(device: GPUDevice): GPUComputePipeline {
+  const cached = matrixMulTiledPipelineCache.get(device)
+  if (cached) return cached
+
+  const module = device.createShaderModule({
+    label: 'matrix-mul-tiled-shader',
+    code: matrixMulTiledShaderSource,
+  })
+
+  const pipeline = device.createComputePipeline({
+    label: 'matrix-mul-tiled-pipeline',
+    layout: 'auto',
+    compute: {
+      module,
+      entryPoint: 'main',
+    },
+  })
+
+  matrixMulTiledPipelineCache.set(device, pipeline)
   return pipeline
 }
 
@@ -170,7 +196,7 @@ export async function multiplySquareMatricesWebGpu(
 
   const shouldReadback = options.readback ?? true
   const device = await getGpuDevice()
-  const pipeline = getMatrixMulPipeline(device)
+  const pipeline = options.optimized ? getMatrixMulTiledPipeline(device) : getMatrixMulPipeline(device)
   const outputByteLength = expectedLength * Float32Array.BYTES_PER_ELEMENT
 
   if (outputByteLength > device.limits.maxStorageBufferBindingSize) {
@@ -352,7 +378,7 @@ export async function multiplyRandomSquareMatricesWebGpu(
 
   const device = await getGpuDevice()
   const fillPipeline = getRandomFillPipeline(device)
-  const mulPipeline = getMatrixMulPipeline(device)
+  const mulPipeline = options.optimized ? getMatrixMulTiledPipeline(device) : getMatrixMulPipeline(device)
 
   if (outputByteLength > device.limits.maxStorageBufferBindingSize) {
     throw new Error('Matrix buffer size exceeds device limits.')

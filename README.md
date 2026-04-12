@@ -70,16 +70,24 @@ src/
 - Supports `backend: webgpu` (default) and `backend: cpu`
 - `inputMode: random` (default) generates both matrices using `randomMin`/`randomMax`
 - `inputMode: custom` accepts `matrixA` and `matrixB` as NxN arrays
+- `optimized: true` enables tiled multiplication (`matrixMulTiled.wgsl`), `optimized: false` uses naive multiplication (`matrixMul.wgsl`)
 - Response returns `matrixC` plus timing metadata only when `size <= 100`
-- `inputMode: random` i `inputMode: custom` na backendzie `webgpu` używają tego samego shadera `matrixMul.wgsl`
 - Very large `inputMode: custom` requests fall back to CPU if the GPU buffer limits would be exceeded, so the result stays correct instead of failing halfway
 
-Random matrices example:
+Random matrices example (tiled):
 
 ```bash
 curl -X POST http://localhost:3000/matrix/multiply \
   -H "Content-Type: application/json" \
-  -d '{"size":256,"backend":"webgpu","inputMode":"random","randomMin":0,"randomMax":10}'
+  -d '{"size":256,"backend":"webgpu","inputMode":"random","optimized":true,"randomMin":0,"randomMax":10}'
+```
+
+Random matrices example (naive):
+
+```bash
+curl -X POST http://localhost:3000/matrix/multiply \
+  -H "Content-Type: application/json" \
+  -d '{"size":256,"backend":"webgpu","inputMode":"random","optimized":false,"randomMin":0,"randomMax":10}'
 ```
 
 Custom 5x5 matrices example:
@@ -115,7 +123,18 @@ Example response:
   "backend": "webgpu",
   "size": 3,
   "inputMode": "custom",
-  "durationMs": 0.123,
+  "optimized": true,
+  "serverDurationMs": 0.456,
+  "generationDurationMs": null,
+  "multiplyDurationMs": 0.123,
+  "totalDurationMs": 0.123,
+  "timingSource": "gpu-timestamp",
+  "memoryEstimate": {
+    "gpuAllocatedBytes": 112,
+    "gpuAllocatedMiB": 0,
+    "hostAllocatedBytes": 108,
+    "hostAllocatedMiB": 0
+  },
   "gflops": 0,
   "matrixC": [
     [30, 24, 18],

@@ -18,6 +18,7 @@ const MatrixBodySchema = z.object({
   size: z.number().int().min(1).default(512),
   backend: BackendSchema.default('webgpu'),
   inputMode: InputModeSchema.default('random'),
+  optimized: z.boolean().default(false),
   randomMin: z.number().default(0),
   randomMax: z.number().default(9),
   randomSeed: z.number().int().min(0).max(U32_MAX).optional(),
@@ -111,7 +112,7 @@ export async function matrixRoute(server: FastifyInstance) {
         summary: 'Matrix multiplication benchmark',
         body: {
           type: 'object',
-          description: 'inputMode="random" with backend="webgpu" generates both matrices directly in WGSL and multiplies them on GPU without CPU-side random fill.',
+          description: 'inputMode="random" with backend="webgpu" generates both matrices directly in WGSL. Set optimized=true to use tiled matrix multiplication (shared memory), or false to use naive multiplication.',
           examples: [
             {
               size: 3,
@@ -132,6 +133,7 @@ export async function matrixRoute(server: FastifyInstance) {
               size: 512,
               backend: 'webgpu',
               inputMode: 'random',
+              optimized: true,
               randomMin: -1,
               randomMax: 1,
               randomSeed: 123456,
@@ -145,6 +147,11 @@ export async function matrixRoute(server: FastifyInstance) {
               enum: ['random', 'custom'],
               default: 'random',
               description: 'random = data generation on selected backend, custom = use matrixA and matrixB from request.',
+            },
+            optimized: {
+              type: 'boolean',
+              default: false,
+              description: 'If true, uses Tiled Matrix Multiplication (Shared Memory). If false, uses Naive approach.',
             },
             randomMin: { type: 'number', default: 0, description: 'Used in random mode.' },
             randomMax: { type: 'number', default: 9, description: 'Used in random mode.' },
@@ -181,6 +188,7 @@ export async function matrixRoute(server: FastifyInstance) {
                 backend: 'webgpu',
                 size: 3,
                 inputMode: 'custom',
+                optimized: true,
                 serverDurationMs: 0.456,
                 generationDurationMs: null,
                 multiplyDurationMs: 0.123,
@@ -203,6 +211,7 @@ export async function matrixRoute(server: FastifyInstance) {
                 backend: 'webgpu',
                 size: 256,
                 inputMode: 'random',
+                optimized: false,
                 serverDurationMs: 12.345,
                 generationDurationMs: 2.111,
                 multiplyDurationMs: 9.876,
@@ -221,6 +230,10 @@ export async function matrixRoute(server: FastifyInstance) {
               backend: { type: 'string' },
               size: { type: 'number' },
               inputMode: { type: 'string' },
+              optimized: {
+                type: 'boolean',
+                description: 'True when tiled matrix multiplication was used. False for naive path or CPU fallback.',
+              },
               serverDurationMs: { type: 'number' },
               generationDurationMs: { type: 'number', nullable: true },
               multiplyDurationMs: { type: 'number', nullable: true },
@@ -304,6 +317,7 @@ export async function matrixRoute(server: FastifyInstance) {
       let totalDurationMs: number | null = null
       let timingSource: z.infer<typeof TimingSourceSchema> = 'cpu-clock'
       let memoryEstimate: MatrixMemoryEstimate | null = null
+      let effectiveOptimized = false
 
       try {
         if (body.backend === 'webgpu') {
@@ -331,6 +345,7 @@ export async function matrixRoute(server: FastifyInstance) {
             const result = await multiplyRandomSquareMatricesWebGpu(body.size, body.randomMin, body.randomMax, {
               readback: true,
               seed: body.randomSeed,
+              optimized: body.optimized,
             })
 
             if (!result.output) {
@@ -343,8 +358,12 @@ export async function matrixRoute(server: FastifyInstance) {
             totalDurationMs = result.totalDurationMs
             timingSource = result.timingSource
             memoryEstimate = result.memoryEstimate
+            effectiveOptimized = body.optimized
           } else {
-            const result = await multiplySquareMatricesWebGpu(body.size, matrixA!, matrixB!, { readback: true })
+            const result = await multiplySquareMatricesWebGpu(body.size, matrixA!, matrixB!, {
+              readback: true,
+              optimized: body.optimized,
+            })
             if (!result.output) {
               throw new Error('WebGPU returned null output despite readback: true')
             }
@@ -354,6 +373,7 @@ export async function matrixRoute(server: FastifyInstance) {
             totalDurationMs = result.totalDurationMs
             timingSource = result.timingSource
             memoryEstimate = result.memoryEstimate
+            effectiveOptimized = body.optimized
           }
         } else {
           if (body.inputMode === 'random') {
@@ -387,6 +407,7 @@ export async function matrixRoute(server: FastifyInstance) {
         backend: 'webgpu' | 'cpu'
         size: number
         inputMode: 'random' | 'custom'
+        optimized: boolean
         serverDurationMs: number
         generationDurationMs: number | null
         multiplyDurationMs: number | null
@@ -399,6 +420,7 @@ export async function matrixRoute(server: FastifyInstance) {
         backend: effectiveBackend,
         size: body.size,
         inputMode: body.inputMode,
+        optimized: effectiveOptimized,
         serverDurationMs: Number(serverDurationMs.toFixed(3)),
         generationDurationMs: generationDurationMs === null ? null : Number(generationDurationMs.toFixed(3)),
         multiplyDurationMs: multiplyDurationMs === null ? null : Number(multiplyDurationMs.toFixed(3)),
