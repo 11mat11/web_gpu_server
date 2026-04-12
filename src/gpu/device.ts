@@ -110,24 +110,25 @@ export function getRequiredDeviceLimits(adapter: GPUAdapter): GPUDeviceDescripto
     // Kluczowe dla dużych macierzy (> 256 MB)
     maxBufferSize: adapter.limits.maxBufferSize,
     maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
-  };
+  }
 
-  // Kluczowe dla wydajności GPGPU
+  // Kluczowe dla wydajności i skalowania GPGPU
   const computeLimits = [
     'maxComputeWorkgroupStorageSize',
     'maxComputeInvocationsPerWorkgroup',
     'maxComputeWorkgroupSizeX',
     'maxComputeWorkgroupSizeY',
     'maxComputeWorkgroupSizeZ',
-  ] as const;
+    'maxComputeWorkgroupsPerDimension',
+  ] as const
 
   for (const key of computeLimits) {
     if (adapter.limits[key]) {
-      limits[key] = adapter.limits[key];
+      limits[key] = adapter.limits[key]
     }
   }
 
-  return limits;
+  return limits
 }
 
 export async function getGpuAdapter(): Promise<GPUAdapter | null> {

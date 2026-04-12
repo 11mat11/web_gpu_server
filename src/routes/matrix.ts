@@ -1,12 +1,18 @@
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 
-import { multiplySquareMatricesWebGpu } from '../gpu/matrixMul.js'
+import {
+  multiplyRandomSquareMatricesWebGpu,
+  multiplySquareMatricesWebGpu,
+  type MatrixMemoryEstimate,
+} from '../gpu/matrixMul.js'
 import { getGpuDevice } from '../gpu/device.js'
 
 const BackendSchema = z.enum(['webgpu', 'cuda', 'cpu'])
 const InputModeSchema = z.enum(['random', 'custom'])
+const TimingSourceSchema = z.enum(['gpu-timestamp', 'cpu-clock'])
 const MATRIX_C_RESPONSE_LIMIT = 100
+const U32_MAX = 0xffffffff
 
 const MatrixBodySchema = z.object({
   size: z.number().int().min(1).default(512),
@@ -14,6 +20,7 @@ const MatrixBodySchema = z.object({
   inputMode: InputModeSchema.default('random'),
   randomMin: z.number().default(0),
   randomMax: z.number().default(9),
+  randomSeed: z.number().int().min(0).max(U32_MAX).optional(),
   matrixA: z.array(z.array(z.number().finite())).optional(),
   matrixB: z.array(z.array(z.number().finite())).optional(),
 })
@@ -76,6 +83,25 @@ function multiplySquareMatricesCpu(size: number, matrixA: Float32Array, matrixB:
   return out
 }
 
+function exceedsGpuMatrixLimits(gpu: GPUDevice, size: number): boolean {
+  const matrixBytes = size * size * Float32Array.BYTES_PER_ELEMENT
+  return matrixBytes > gpu.limits.maxBufferSize || matrixBytes > gpu.limits.maxStorageBufferBindingSize
+}
+
+function toMiB(bytes: number): number {
+  return Number((bytes / (1024 * 1024)).toFixed(3))
+}
+
+function createCpuMemoryEstimate(matrixA: Float32Array, matrixB: Float32Array, matrixC: Float32Array): MatrixMemoryEstimate {
+  const hostAllocatedBytes = matrixA.byteLength + matrixB.byteLength + matrixC.byteLength
+  return {
+    gpuAllocatedBytes: 0,
+    gpuAllocatedMiB: 0,
+    hostAllocatedBytes,
+    hostAllocatedMiB: toMiB(hostAllocatedBytes),
+  }
+}
+
 export async function matrixRoute(server: FastifyInstance) {
   server.post(
     '/multiply',
@@ -85,7 +111,7 @@ export async function matrixRoute(server: FastifyInstance) {
         summary: 'Matrix multiplication benchmark',
         body: {
           type: 'object',
-          description: 'inputMode="random" generates both matrices with random values in range [randomMin, randomMax]. inputMode="custom" uses matrixA and matrixB provided as number[][] with exactly size rows and size columns in each row.',
+          description: 'inputMode="random" with backend="webgpu" generates both matrices directly in WGSL and multiplies them on GPU without CPU-side random fill.',
           examples: [
             {
               size: 3,
@@ -102,6 +128,14 @@ export async function matrixRoute(server: FastifyInstance) {
                 [3, 2, 1],
               ],
             },
+            {
+              size: 512,
+              backend: 'webgpu',
+              inputMode: 'random',
+              randomMin: -1,
+              randomMax: 1,
+              randomSeed: 123456,
+            },
           ],
           properties: {
             size: { type: 'number', default: 512, description: 'NxN matrix size' },
@@ -110,10 +144,16 @@ export async function matrixRoute(server: FastifyInstance) {
               type: 'string',
               enum: ['random', 'custom'],
               default: 'random',
-              description: 'random = generate values automatically, custom = use matrixA and matrixB from request.',
+              description: 'random = data generation on selected backend, custom = use matrixA and matrixB from request.',
             },
-            randomMin: { type: 'number', default: 0, description: 'Used only when inputMode=random.' },
-            randomMax: { type: 'number', default: 9, description: 'Used only when inputMode=random.' },
+            randomMin: { type: 'number', default: 0, description: 'Used in random mode.' },
+            randomMax: { type: 'number', default: 9, description: 'Used in random mode.' },
+            randomSeed: {
+              type: 'number',
+              minimum: 0,
+              maximum: U32_MAX,
+              description: 'Optional deterministic seed for random generation in GPU random mode.',
+            },
             matrixA: {
               type: 'array',
               items: {
@@ -135,14 +175,23 @@ export async function matrixRoute(server: FastifyInstance) {
         response: {
           200: {
             type: 'object',
-            description: 'Response contains only the computed result matrixC plus timing metadata.',
+            description: 'Response contains timing metadata for generation and multiplication, plus optional matrixC for small sizes.',
             examples: [
               {
                 backend: 'webgpu',
                 size: 3,
                 inputMode: 'custom',
                 serverDurationMs: 0.456,
-                gpuDurationMs: 0.123,
+                generationDurationMs: null,
+                multiplyDurationMs: 0.123,
+                totalDurationMs: 0.123,
+                timingSource: 'gpu-timestamp',
+                memoryEstimate: {
+                  gpuAllocatedBytes: 112,
+                  gpuAllocatedMiB: 0,
+                  hostAllocatedBytes: 108,
+                  hostAllocatedMiB: 0,
+                },
                 gflops: 0,
                 matrixC: [
                   [30, 24, 18],
@@ -155,7 +204,16 @@ export async function matrixRoute(server: FastifyInstance) {
                 size: 256,
                 inputMode: 'random',
                 serverDurationMs: 12.345,
-                gpuDurationMs: 9.876,
+                generationDurationMs: 2.111,
+                multiplyDurationMs: 9.876,
+                totalDurationMs: 11.987,
+                timingSource: 'gpu-timestamp',
+                memoryEstimate: {
+                  gpuAllocatedBytes: 1048576,
+                  gpuAllocatedMiB: 1,
+                  hostAllocatedBytes: 262144,
+                  hostAllocatedMiB: 0.25,
+                },
                 gflops: 2.7,
               },
             ],
@@ -164,7 +222,19 @@ export async function matrixRoute(server: FastifyInstance) {
               size: { type: 'number' },
               inputMode: { type: 'string' },
               serverDurationMs: { type: 'number' },
-              gpuDurationMs: { type: 'number', nullable: true },
+              generationDurationMs: { type: 'number', nullable: true },
+              multiplyDurationMs: { type: 'number', nullable: true },
+              totalDurationMs: { type: 'number', nullable: true },
+              timingSource: { type: 'string', enum: ['gpu-timestamp', 'cpu-clock'] },
+              memoryEstimate: {
+                type: 'object',
+                properties: {
+                  gpuAllocatedBytes: { type: 'number' },
+                  gpuAllocatedMiB: { type: 'number' },
+                  hostAllocatedBytes: { type: 'number' },
+                  hostAllocatedMiB: { type: 'number' },
+                },
+              },
               gflops: { type: 'number' },
               matrixC: {
                 type: 'array',
@@ -224,38 +294,81 @@ export async function matrixRoute(server: FastifyInstance) {
             message: err instanceof Error ? err.message : 'Invalid custom matrices.',
           })
         }
-      } else {
-        matrixA = randomMatrix(body.size, body.randomMin, body.randomMax)
-        matrixB = randomMatrix(body.size, body.randomMin, body.randomMax)
       }
 
       const computeStart = performance.now()
       let matrixC: Float32Array
       let effectiveBackend: 'webgpu' | 'cpu' = body.backend === 'cpu' ? 'cpu' : 'webgpu'
-      let gpuDurationMs: number | null = null
+      let generationDurationMs: number | null = null
+      let multiplyDurationMs: number | null = null
+      let totalDurationMs: number | null = null
+      let timingSource: z.infer<typeof TimingSourceSchema> = 'cpu-clock'
+      let memoryEstimate: MatrixMemoryEstimate | null = null
 
       try {
         if (body.backend === 'webgpu') {
           const gpu = await getGpuDevice()
-          const byteLength = body.size * body.size * Float32Array.BYTES_PER_ELEMENT
+          const tooLargeForGpu = exceedsGpuMatrixLimits(gpu, body.size)
 
-          if (byteLength > gpu.limits.maxBufferSize || byteLength > gpu.limits.maxStorageBufferBindingSize) {
-            console.warn(
-                `[Matrix] size=${body.size} exceeds GPU buffer limits, falling back to CPU for correctness.`,
-            )
+          if (tooLargeForGpu) {
+            console.warn(`[Matrix] size=${body.size} exceeds GPU buffer limits, falling back to CPU for correctness.`)
             effectiveBackend = 'cpu'
+
+            if (body.inputMode === 'random') {
+              const cpuGenerationStart = performance.now()
+              matrixA = randomMatrix(body.size, body.randomMin, body.randomMax)
+              matrixB = randomMatrix(body.size, body.randomMin, body.randomMax)
+              generationDurationMs = performance.now() - cpuGenerationStart
+            }
+
+            const cpuMulStart = performance.now()
             matrixC = multiplySquareMatricesCpu(body.size, matrixA!, matrixB!)
+            multiplyDurationMs = performance.now() - cpuMulStart
+            totalDurationMs = (generationDurationMs ?? 0) + multiplyDurationMs
+            timingSource = 'cpu-clock'
+            memoryEstimate = createCpuMemoryEstimate(matrixA!, matrixB!, matrixC)
+          } else if (body.inputMode === 'random') {
+            const result = await multiplyRandomSquareMatricesWebGpu(body.size, body.randomMin, body.randomMax, {
+              readback: true,
+              seed: body.randomSeed,
+            })
+
+            if (!result.output) {
+              throw new Error('WebGPU returned null output despite readback: true')
+            }
+
+            matrixC = result.output
+            generationDurationMs = result.generationDurationMs
+            multiplyDurationMs = result.multiplyDurationMs
+            totalDurationMs = result.totalDurationMs
+            timingSource = result.timingSource
+            memoryEstimate = result.memoryEstimate
           } else {
-            // POPRAWKA TUTAJ: Rozpakowujemy obiekt { output } z powrotem do zmiennej matrixC
             const result = await multiplySquareMatricesWebGpu(body.size, matrixA!, matrixB!, { readback: true })
             if (!result.output) {
-              throw new Error("WebGPU returned null output despite readback: true")
+              throw new Error('WebGPU returned null output despite readback: true')
             }
             matrixC = result.output
-            gpuDurationMs = result.gpuDurationMs
+            generationDurationMs = result.generationDurationMs
+            multiplyDurationMs = result.multiplyDurationMs
+            totalDurationMs = result.totalDurationMs
+            timingSource = result.timingSource
+            memoryEstimate = result.memoryEstimate
           }
         } else {
+          if (body.inputMode === 'random') {
+            const cpuGenerationStart = performance.now()
+            matrixA = randomMatrix(body.size, body.randomMin, body.randomMax)
+            matrixB = randomMatrix(body.size, body.randomMin, body.randomMax)
+            generationDurationMs = performance.now() - cpuGenerationStart
+          }
+
+          const cpuMulStart = performance.now()
           matrixC = multiplySquareMatricesCpu(body.size, matrixA!, matrixB!)
+          multiplyDurationMs = performance.now() - cpuMulStart
+          totalDurationMs = (generationDurationMs ?? 0) + multiplyDurationMs
+          timingSource = 'cpu-clock'
+          memoryEstimate = createCpuMemoryEstimate(matrixA!, matrixB!, matrixC)
         }
       } catch (err) {
         return reply.code(500).send({
@@ -267,7 +380,7 @@ export async function matrixRoute(server: FastifyInstance) {
       const computeDurationMs = performance.now() - computeStart
       const serverDurationMs = performance.now() - serverStart
       const ops = 2 * body.size ** 3
-      const gflopsBaseMs = gpuDurationMs ?? computeDurationMs
+      const gflopsBaseMs = multiplyDurationMs ?? computeDurationMs
       const gflops = gflopsBaseMs > 0 ? ops / (gflopsBaseMs / 1000) / 1e9 : 0
 
       const response: {
@@ -275,7 +388,11 @@ export async function matrixRoute(server: FastifyInstance) {
         size: number
         inputMode: 'random' | 'custom'
         serverDurationMs: number
-        gpuDurationMs: number | null
+        generationDurationMs: number | null
+        multiplyDurationMs: number | null
+        totalDurationMs: number | null
+        timingSource: z.infer<typeof TimingSourceSchema>
+        memoryEstimate: MatrixMemoryEstimate
         gflops: number
         matrixC?: number[][]
       } = {
@@ -283,7 +400,11 @@ export async function matrixRoute(server: FastifyInstance) {
         size: body.size,
         inputMode: body.inputMode,
         serverDurationMs: Number(serverDurationMs.toFixed(3)),
-        gpuDurationMs: gpuDurationMs === null ? null : Number(gpuDurationMs.toFixed(3)),
+        generationDurationMs: generationDurationMs === null ? null : Number(generationDurationMs.toFixed(3)),
+        multiplyDurationMs: multiplyDurationMs === null ? null : Number(multiplyDurationMs.toFixed(3)),
+        totalDurationMs: totalDurationMs === null ? null : Number(totalDurationMs.toFixed(3)),
+        timingSource,
+        memoryEstimate: memoryEstimate ?? createCpuMemoryEstimate(matrixA!, matrixB!, matrixC),
         gflops: Number(gflops.toFixed(2)),
       }
 
