@@ -3,6 +3,7 @@ import { getGpuDevice } from './device.js'
 
 const WORKGROUP_SIZE = 16
 const RANDOM_FILL_WORKGROUP_SIZE = 256
+const OPTIMIZED_TILE_SIZE = 32
 
 const matrixMulShaderSource = readFileSync(new URL('./shaders/matrixMul.wgsl', import.meta.url), 'utf8')
 const matrixMulTiledShaderSource = readFileSync(new URL('./shaders/matrixMulTiled.wgsl', import.meta.url), 'utf8')
@@ -296,7 +297,8 @@ export async function multiplySquareMatricesWebGpu(
     pass.setPipeline(pipeline)
     pass.setBindGroup(0, bindGroup)
 
-    const gridDim = Math.ceil(size / WORKGROUP_SIZE)
+    const tileSize = options.optimized ? OPTIMIZED_TILE_SIZE : WORKGROUP_SIZE
+    const gridDim = Math.ceil(size / tileSize)
     pass.dispatchWorkgroups(gridDim, gridDim, 1)
     pass.end()
 
@@ -518,7 +520,8 @@ export async function multiplyRandomSquareMatricesWebGpu(
     })
     mulPass.setPipeline(mulPipeline)
     mulPass.setBindGroup(0, mulBindGroup)
-    const gridDim = Math.ceil(size / WORKGROUP_SIZE)
+    const tileSize = options.optimized ? OPTIMIZED_TILE_SIZE : WORKGROUP_SIZE
+    const gridDim = Math.ceil(size / tileSize)
     mulPass.dispatchWorkgroups(gridDim, gridDim, 1)
     mulPass.end()
 

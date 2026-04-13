@@ -7,6 +7,7 @@ import {
   type MatrixMemoryEstimate,
 } from '../gpu/matrixMul.js'
 import { getGpuDevice } from '../gpu/device.js'
+import { multiplyMatrixCuda } from '../cuda/cudaBackend.js'
 
 const BackendSchema = z.enum(['webgpu', 'cuda', 'cpu'])
 const InputModeSchema = z.enum(['random', 'custom'])
@@ -109,15 +110,35 @@ export async function matrixRoute(server: FastifyInstance) {
     {
       schema: {
         tags: ['matrix'],
-        summary: 'Matrix multiplication benchmark',
+        summary: 'Matrix multiplication benchmark (WebGPU/CUDA/CPU)',
         body: {
           type: 'object',
-          description: 'inputMode="random" with backend="webgpu" generates both matrices directly in WGSL. Set optimized=true to use tiled matrix multiplication (shared memory), or false to use naive multiplication.',
+          description:
+            'Parametry wejściowe dla mnożenia macierzy NxN. backend wybiera silnik (webgpu/cuda/cpu), inputMode wybiera źródło danych (random/custom), a optimized przełącza kernel naiwny vs tiled dla backendów GPU.',
           examples: [
+            {
+              size: 512,
+              backend: 'webgpu',
+              inputMode: 'random',
+              optimized: false,
+              randomMin: -1,
+              randomMax: 1,
+              randomSeed: 123456,
+            },
+            {
+              size: 512,
+              backend: 'webgpu',
+              inputMode: 'random',
+              optimized: true,
+              randomMin: -1,
+              randomMax: 1,
+              randomSeed: 123456,
+            },
             {
               size: 3,
               backend: 'webgpu',
               inputMode: 'custom',
+              optimized: true,
               matrixA: [
                 [1, 2, 3],
                 [4, 5, 6],
@@ -130,36 +151,75 @@ export async function matrixRoute(server: FastifyInstance) {
               ],
             },
             {
-              size: 512,
-              backend: 'webgpu',
+              size: 1024,
+              backend: 'cuda',
               inputMode: 'random',
               optimized: true,
-              randomMin: -1,
-              randomMax: 1,
-              randomSeed: 123456,
+              randomMin: 0,
+              randomMax: 10,
+              randomSeed: 42,
+            },
+            {
+              size: 2,
+              backend: 'cuda',
+              inputMode: 'custom',
+              optimized: false,
+              matrixA: [
+                [1, 2],
+                [3, 4],
+              ],
+              matrixB: [
+                [5, 6],
+                [7, 8],
+              ],
+            },
+            {
+              size: 256,
+              backend: 'cpu',
+              inputMode: 'random',
+              randomMin: -5,
+              randomMax: 5,
+            },
+            {
+              size: 2,
+              backend: 'cpu',
+              inputMode: 'custom',
+              matrixA: [
+                [2, 0],
+                [1, 2],
+              ],
+              matrixB: [
+                [3, 1],
+                [4, 2],
+              ],
             },
           ],
           properties: {
             size: { type: 'number', default: 512, description: 'NxN matrix size' },
-            backend: { type: 'string', enum: ['webgpu', 'cuda', 'cpu'], default: 'webgpu' },
+            backend: {
+              type: 'string',
+              enum: ['webgpu', 'cuda', 'cpu'],
+              default: 'webgpu',
+              description: 'Silnik obliczeń: webgpu (WGSL), cuda (N-API addon), cpu (fallback/referencja).',
+            },
             inputMode: {
               type: 'string',
               enum: ['random', 'custom'],
               default: 'random',
-              description: 'random = data generation on selected backend, custom = use matrixA and matrixB from request.',
+              description: 'random = generacja A/B (GPU dla webgpu/cuda, CPU dla cpu), custom = użyj matrixA i matrixB z requestu.',
             },
             optimized: {
               type: 'boolean',
               default: false,
-              description: 'If true, uses Tiled Matrix Multiplication (Shared Memory). If false, uses Naive approach.',
+              description: 'Dotyczy webgpu/cuda: true = tiled/shared memory, false = naive. Dla cpu parametr jest ignorowany.',
             },
-            randomMin: { type: 'number', default: 0, description: 'Used in random mode.' },
-            randomMax: { type: 'number', default: 9, description: 'Used in random mode.' },
+            randomMin: { type: 'number', default: 0, description: 'Dolna granica losowania, używana tylko gdy inputMode=random.' },
+            randomMax: { type: 'number', default: 9, description: 'Górna granica losowania, używana tylko gdy inputMode=random.' },
             randomSeed: {
               type: 'number',
               minimum: 0,
               maximum: U32_MAX,
-              description: 'Optional deterministic seed for random generation in GPU random mode.',
+              description: 'Opcjonalny seed deterministyczny dla random mode (webgpu/cuda).',
             },
             matrixA: {
               type: 'array',
@@ -167,7 +227,7 @@ export async function matrixRoute(server: FastifyInstance) {
                 type: 'array',
                 items: { type: 'number' },
               },
-              description: 'Required in custom mode. Format: number[][]. Must be size x size, e.g. [[1,2],[3,4]] for size=2.',
+              description: 'Wymagane tylko dla inputMode=custom. Format number[][] o rozmiarze size x size.',
             },
             matrixB: {
               type: 'array',
@@ -175,14 +235,15 @@ export async function matrixRoute(server: FastifyInstance) {
                 type: 'array',
                 items: { type: 'number' },
               },
-              description: 'Required in custom mode. Format: number[][]. Must be size x size, same shape as matrixA.',
+              description: 'Wymagane tylko dla inputMode=custom. Format number[][], ten sam rozmiar co matrixA.',
             },
           },
         },
         response: {
           200: {
             type: 'object',
-            description: 'Response contains timing metadata for generation and multiplication, plus optional matrixC for small sizes.',
+            description:
+              'Wynik mnożenia i metryki czasu/pamięci. timingSource=gpu-timestamp dla backendów GPU (webgpu/cuda), timingSource=cpu-clock dla backendu cpu.',
             examples: [
               {
                 backend: 'webgpu',
@@ -225,6 +286,64 @@ export async function matrixRoute(server: FastifyInstance) {
                 },
                 gflops: 2.7,
               },
+              {
+                backend: 'cuda',
+                size: 1024,
+                inputMode: 'random',
+                optimized: true,
+                serverDurationMs: 28.944,
+                generationDurationMs: 4.212,
+                multiplyDurationMs: 20.731,
+                totalDurationMs: 24.943,
+                timingSource: 'gpu-timestamp',
+                memoryEstimate: {
+                  gpuAllocatedBytes: 12582912,
+                  gpuAllocatedMiB: 12,
+                  hostAllocatedBytes: 4194304,
+                  hostAllocatedMiB: 4,
+                },
+                gflops: 103.65,
+              },
+              {
+                backend: 'cuda',
+                size: 2,
+                inputMode: 'custom',
+                optimized: false,
+                serverDurationMs: 0.39,
+                generationDurationMs: null,
+                multiplyDurationMs: 0.02,
+                totalDurationMs: 0.02,
+                timingSource: 'gpu-timestamp',
+                memoryEstimate: {
+                  gpuAllocatedBytes: 48,
+                  gpuAllocatedMiB: 0,
+                  hostAllocatedBytes: 48,
+                  hostAllocatedMiB: 0,
+                },
+                gflops: 0,
+                matrixC: [
+                  [19, 22],
+                  [43, 50],
+                ],
+              },
+              {
+                backend: 'cpu',
+                size: 256,
+                inputMode: 'random',
+                optimized: false,
+                serverDurationMs: 211.54,
+                generationDurationMs: 4.11,
+                multiplyDurationMs: 207.12,
+                totalDurationMs: 211.23,
+                timingSource: 'cpu-clock',
+                memoryEstimate: {
+                  gpuAllocatedBytes: 0,
+                  gpuAllocatedMiB: 0,
+                  hostAllocatedBytes: 786432,
+                  hostAllocatedMiB: 0.75,
+                },
+                gflops: 0.16,
+              },
             ],
             properties: {
               backend: { type: 'string' },
@@ -232,15 +351,20 @@ export async function matrixRoute(server: FastifyInstance) {
               inputMode: { type: 'string' },
               optimized: {
                 type: 'boolean',
-                description: 'True when tiled matrix multiplication was used. False for naive path or CPU fallback.',
+                description: 'Finalnie użyta ścieżka: true = tiled GPU, false = naive lub backend cpu.',
               },
               serverDurationMs: { type: 'number' },
-              generationDurationMs: { type: 'number', nullable: true },
-              multiplyDurationMs: { type: 'number', nullable: true },
-              totalDurationMs: { type: 'number', nullable: true },
-              timingSource: { type: 'string', enum: ['gpu-timestamp', 'cpu-clock'] },
+              generationDurationMs: { type: 'number', nullable: true, description: 'Czas generowania danych wejściowych (random mode).' },
+              multiplyDurationMs: { type: 'number', nullable: true, description: 'Czas samego mnożenia macierzy.' },
+              totalDurationMs: { type: 'number', nullable: true, description: 'Suma generationDurationMs + multiplyDurationMs.' },
+              timingSource: {
+                type: 'string',
+                enum: ['gpu-timestamp', 'cpu-clock'],
+                description: 'Źródło pomiaru czasu: znaczniki GPU lub zegar CPU.',
+              },
               memoryEstimate: {
                 type: 'object',
+                description: 'Szacowane użycie pamięci na GPU i po stronie hosta.',
                 properties: {
                   gpuAllocatedBytes: { type: 'number' },
                   gpuAllocatedMiB: { type: 'number' },
@@ -280,13 +404,6 @@ export async function matrixRoute(server: FastifyInstance) {
       const serverStart = performance.now()
       const body = MatrixBodySchema.parse(req.body)
 
-      if (body.backend === 'cuda') {
-        return reply.code(400).send({
-          error: 'unsupported_backend',
-          message: 'CUDA backend is not implemented yet. Use webgpu or cpu.',
-        })
-      }
-
       let matrixA: Float32Array | null = null
       let matrixB: Float32Array | null = null
 
@@ -311,7 +428,7 @@ export async function matrixRoute(server: FastifyInstance) {
 
       const computeStart = performance.now()
       let matrixC: Float32Array
-      let effectiveBackend: 'webgpu' | 'cpu' = body.backend === 'cpu' ? 'cpu' : 'webgpu'
+      let effectiveBackend: 'webgpu' | 'cuda' | 'cpu' = body.backend
       let generationDurationMs: number | null = null
       let multiplyDurationMs: number | null = null
       let totalDurationMs: number | null = null
@@ -375,6 +492,30 @@ export async function matrixRoute(server: FastifyInstance) {
             memoryEstimate = result.memoryEstimate
             effectiveOptimized = body.optimized
           }
+        } else if (body.backend === 'cuda') {
+          const result = await multiplyMatrixCuda({
+            size: body.size,
+            inputMode: body.inputMode,
+            optimized: body.optimized,
+            readback: true,
+            randomMin: body.randomMin,
+            randomMax: body.randomMax,
+            randomSeed: body.randomSeed,
+            matrixA: matrixA ?? undefined,
+            matrixB: matrixB ?? undefined,
+          })
+
+          if (!result.output) {
+            throw new Error('CUDA backend returned null output despite readback: true')
+          }
+
+          matrixC = result.output
+          generationDurationMs = result.generationDurationMs
+          multiplyDurationMs = result.multiplyDurationMs
+          totalDurationMs = result.totalDurationMs
+          timingSource = result.timingSource
+          memoryEstimate = result.memoryEstimate
+          effectiveOptimized = body.optimized
         } else {
           if (body.inputMode === 'random') {
             const cpuGenerationStart = performance.now()
@@ -404,7 +545,7 @@ export async function matrixRoute(server: FastifyInstance) {
       const gflops = gflopsBaseMs > 0 ? ops / (gflopsBaseMs / 1000) / 1e9 : 0
 
       const response: {
-        backend: 'webgpu' | 'cpu'
+        backend: 'webgpu' | 'cuda' | 'cpu'
         size: number
         inputMode: 'random' | 'custom'
         optimized: boolean
