@@ -207,7 +207,6 @@ export async function gpuInfoRoute(server: FastifyInstance) {
   )
 }
 
-// ─── Helper ───────────────────────────────────────────────────────────────────
 function makeStorageBuffer(device: GPUDevice, data: Float32Array): GPUBuffer {
   const buf = device.createBuffer({
     size: data.byteLength,

@@ -1,8 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import * as z from 'zod'
 
-// ─── In-memory store for benchmark results ────────────────────────────────────
-// In a real setup you'd persist to SQLite or JSON file
 const results: BenchmarkResult[] = []
 let runningJob: string | null = null
 
@@ -66,7 +64,7 @@ export async function benchmarkRoute(server: FastifyInstance) {
         }
         results.push(result)
 
-        // Run benchmark in background (don't await in handler)
+        // Run benchmark in background
         runBenchmarkJob(result, body.runs).finally(() => {
           runningJob = null
         })
@@ -75,7 +73,7 @@ export async function benchmarkRoute(server: FastifyInstance) {
       },
   )
 
-  // GET /benchmark/status/:id  — poll job status from mobile app
+  // GET /benchmark/status/:id  — poll job status
   server.get(
       '/status/:id',
       {

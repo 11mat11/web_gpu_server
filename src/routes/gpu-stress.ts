@@ -28,7 +28,6 @@ const activeTimers  = new Map<string, ReturnType<typeof setTimeout>>()
 const CHUNK_BYTES  = 256 * 1024 * 1024   // 256 MB
 /** Stable default target when client does not provide explicit value. */
 const DEFAULT_MB   = 1024  // 1 GB
-/** One touch per page gives a good balance between realism and cost. */
 const TOUCH_STEP_BYTES = 4096
 const TOUCH_WORKGROUP_SIZE = 256
 const STRESS_SHADER_PATH = resolve(process.cwd(), 'src/gpu/shaders/stressTouch.wgsl')
@@ -272,11 +271,9 @@ export async function gpuStressRoute(server: FastifyInstance) {
           return reply.send({ error: 'no_gpu', message: String(err) })
         }
 
-        // Total VRAM is not reliably exposed by WebGPU in Node, so use explicit MB.
         const targetMb = body.targetMb
         const targetBytes = targetMb * 1024 * 1024
 
-        // ── Allocate ─────────────────────────────────────────────────────────
         console.log(`[GPU Stress] 🔴 Starting allocation: ${targetMb} MB`)
         let buffers   = await allocateVram(device, targetBytes)
 
