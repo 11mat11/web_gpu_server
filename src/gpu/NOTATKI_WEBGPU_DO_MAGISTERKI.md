@@ -20,4 +20,12 @@ GFLOPS liczony jest poza shaderami, w warstwie API, na podstawie klasycznego prz
 
 W kontekscie porownania z CUDA najwazniejsze jest utrzymanie tej samej metodologii: ten sam rozmiar macierzy, ten sam tryb danych (`random` albo `custom`), ten sam wariant kernela (`naive` albo `tiled`), ta sama decyzja o readback oraz ta sama definicja czasu. Dopiero wtedy roznice w GFLOPS i czasach maja wartosc analityczna i moga byc sensownie interpretowane w pracy.
 
+## Dodatkowy blok - skad bierze sie `memoryEstimate`
+
+Wartosci pamieci nie sa mierzone przez profiler runtime, tylko liczone deterministycznie w `matrixMul.ts` jako suma rozmiarow buforow tworzonych przez kod. Dla sciezki `multiplySquareMatricesWebGpu` (wejscie custom) `gpuAllocatedBytes` to: bufor `dims` + trzy glowne bufory macierzy (`A`, `B`, `C`) + opcjonalny bufor readback + opcjonalne bufory query (`resolve` i `readback` po 16 bajtow). `hostAllocatedBytes` to dane obecne po stronie hosta: `matrixA` + `matrixB` + opcjonalna kopia wyniku, jesli wlaczone jest readback.
+
+Dla sciezki `multiplyRandomSquareMatricesWebGpu` (wejscie random) logika jest analogiczna, ale pojawia sie jeszcze bufor parametrow losowania. W tym wariancie `gpuAllocatedBytes` obejmuje: `randomParams` + `dims` + trzy bufory macierzy + opcjonalny readback + opcjonalne bufory query (tym razem po 32 bajty, bo sa 4 znaczniki). `hostAllocatedBytes` obejmuje tylko to, co rzeczywiscie jest utrzymywane po stronie CPU w tym przeplywie: `randomParams`, `dims` i opcjonalny bufor na wynik readback.
+
+Pola `gpuAllocatedMiB` i `hostAllocatedMiB` to te same wartosci po przeliczeniu przez `bytes / (1024 * 1024)` i zaokragleniu do 3 miejsc po przecinku. Czyli te liczby to swiadoma estymacja alokacji z kodu, a nie bezposredni odczyt z narzedzi typu Nsight.
+
 

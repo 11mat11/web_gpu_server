@@ -28,3 +28,11 @@ Istotne sa tez flagi kompilacji w `binding.gyp`: optymalizacja `-O3`, architektu
 
 Najkrotsze podsumowanie calej sciezki jest takie: Node.js przyjmuje parametry, `cudaBackend.ts` pakuje je do kontraktu, `addon.cpp` i `cuda_worker.h` uruchamiaja asynchroniczna prace natywna, `matrix_kernels.cu` wykonuje losowanie i/lub GEMM na GPU, a wynik wraca do JavaScript jako Promise z metrykami czasu i pamieci. `binding.gyp` nie wykonuje obliczen, ale jest krytyczny, bo bez niego ten most kompilacyjny i linkowanie CUDA z addonem Node.js w ogole by nie dzialaly.
 
+## Dodatkowy blok - skad bierze sie `memoryEstimate`
+
+W CUDA te wartosci sa liczone bezposrednio w `addon.cpp`, a nie pobierane z zewnetrznego profilera. Punktem startowym jest `matrixBytes = N * N * sizeof(float)`. Na tej podstawie `gpuAllocatedBytes` ustawiane jest jako `matrixBytes * 3`, bo zawsze alokowane sa trzy bufory urzadzenia: `dMatrixA`, `dMatrixB`, `dMatrixC`.
+
+`hostAllocatedBytes` zalezy od trybu wejscia i readback: dla `custom` host trzyma dwie macierze wejsciowe (`A` i `B`), wiec dochodzi `matrixBytes * 2`; dla `random` ten skladnik jest liczony jako 0, bo dane powstaja na GPU. Do tego dochodzi opcjonalnie `matrixBytes` na wynik, jesli wlaczony jest `readback`. W skrocie: `hostAllocatedBytes = (randomInput ? 0 : 2 * matrixBytes) + (readback ? matrixBytes : 0)`.
+
+`gpuAllocatedMiB` i `hostAllocatedMiB` powstaja przez przeliczenie bajtow na MiB (`/ 1024 / 1024`) i zaokraglenie do 3 miejsc po przecinku. To znaczy, ze metryka pamieci w odpowiedzi API jest estymacja oparta o jawnie tworzone bufory, a nie pomiarem calkowitego zuzycia pamieci procesu/GPU na poziomie sterownika.
+
