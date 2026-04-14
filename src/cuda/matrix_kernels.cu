@@ -115,7 +115,7 @@ __global__ void matrixMulTiledKernel(const float* __restrict__ matrixA, const fl
   if (row1 < size && col1 < size) matrixC[row1 * size + col1] = sum11;
 }
 
-} // namespace
+}
 
 void launchRandomFillKernel(
   float* out,

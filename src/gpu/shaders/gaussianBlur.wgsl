@@ -1,5 +1,4 @@
-// Simple separable Gaussian blur (horizontal pass)
-// Input/output are RGBA8 images stored as u32 arrays
+// plik poglądowy na potem
 
 struct ImageSize {
   width:  u32,

@@ -14,7 +14,6 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let wordIndex = lane * params.stepWords;
 
   if (wordIndex < params.totalWords) {
-    // Touch every selected page and change value to force physical backing.
     data[wordIndex] = data[wordIndex] ^ (params.seed + lane);
   }
 }
