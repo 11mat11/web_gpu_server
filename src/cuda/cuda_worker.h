@@ -10,13 +10,11 @@
 #include <vector>
 
 #include "matrix_kernels.h"
-using namespace Napi;
-using namespace std;
 #define CUDA_CHECK_THROW(call)                                                                                          \
   do {                                                                                                                  \
     const cudaError_t cudaStatus = (call);                                                                             \
     if (cudaStatus != cudaSuccess) {                                                                                   \
-      throw runtime_error(string("CUDA error in ") + #call + ": " + cudaGetErrorString(cudaStatus));      \
+      throw std::runtime_error(std::string("CUDA error in ") + #call + ": " + cudaGetErrorString(cudaStatus));      \
     }                                                                                                                   \
   } while (0)
 
@@ -28,27 +26,27 @@ struct CudaMatrixRequest {
   float randomMin = 0.0F;
   float randomMax = 1.0F;
   uint32_t randomSeed = 0U;
-  vector<float> matrixA;
-  vector<float> matrixB;
+  std::vector<float> matrixA;
+  std::vector<float> matrixB;
 };
 
-class CudaMatrixWorker final : public AsyncWorker {
+class CudaMatrixWorker final : public Napi::AsyncWorker {
 public:
-  CudaMatrixWorker(Env env, const CudaMatrixRequest& request);
+  CudaMatrixWorker(Napi::Env env, const CudaMatrixRequest& request);
   ~CudaMatrixWorker() override;
 
-  Promise GetPromise() const;
+  Napi::Promise GetPromise() const;
 
   void Execute() override;
   void OnOK() override;
-  void OnError(const Error& error) override;
+  void OnError(const Napi::Error& error) override;
 
 private:
   void Cleanup();
-  Value BuildResult(Env env) const;
+  Napi::Value BuildResult(Napi::Env env) const;
   static double ToMiB(size_t bytes);
 
-  Promise::Deferred deferred_;
+  Napi::Promise::Deferred deferred_;
   CudaMatrixRequest request_;
 
   float* dMatrixA_ = nullptr;
@@ -59,8 +57,8 @@ private:
   cudaEvent_t multiplyStartEvent_ = nullptr;
   cudaEvent_t multiplyStopEvent_ = nullptr;
 
-  vector<float> output_;
-  optional<double> generationDurationMs_;
+  std::vector<float> output_;
+  std::optional<double> generationDurationMs_;
   double multiplyDurationMs_ = 0.0;
   double totalDurationMs_ = 0.0;
 
@@ -68,7 +66,7 @@ private:
   size_t hostAllocatedBytes_ = 0;
 };
 
-CudaMatrixRequest ParseCudaMatrixRequest(const CallbackInfo& info);
+CudaMatrixRequest ParseCudaMatrixRequest(const Napi::CallbackInfo& info);
 
 
 

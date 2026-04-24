@@ -5,93 +5,92 @@
 #include <cstring>
 #include <limits>
 #include <stdexcept>
-using namespace Napi;
-using namespace std;
+
 namespace {
 
 constexpr unsigned int kSaltA = 0x9E3779B9U;
 constexpr unsigned int kSaltB = 0x85EBCA6BU;
 
-string GetStringProperty(const Object& obj, const char* key, const string& fallback) {
-  const Value value = obj.Get(key);
+std::string GetStringProperty(const Napi::Object& obj, const char* key, const std::string& fallback) {
+  const Napi::Value value = obj.Get(key);
   if (value.IsString()) {
-    return value.As<String>().Utf8Value();
+    return value.As<Napi::String>().Utf8Value();
   }
   return fallback;
 }
 
-bool GetBoolProperty(const Object& obj, const char* key, bool fallback) {
-  const Value value = obj.Get(key);
+bool GetBoolProperty(const Napi::Object& obj, const char* key, bool fallback) {
+  const Napi::Value value = obj.Get(key);
   if (value.IsBoolean()) {
-    return value.As<Boolean>().Value();
+    return value.As<Napi::Boolean>().Value();
   }
   return fallback;
 }
 
-float GetFloatProperty(const Object& obj, const char* key, float fallback) {
-  const Value value = obj.Get(key);
+float GetFloatProperty(const Napi::Object& obj, const char* key, float fallback) {
+  const Napi::Value value = obj.Get(key);
   if (value.IsNumber()) {
-    return static_cast<float>(value.As<Number>().DoubleValue());
+    return static_cast<float>(value.As<Napi::Number>().DoubleValue());
   }
   return fallback;
 }
 
-uint32_t GetUint32Property(const Object& obj, const char* key, uint32_t fallback) {
-  const Value value = obj.Get(key);
+uint32_t GetUint32Property(const Napi::Object& obj, const char* key, uint32_t fallback) {
+  const Napi::Value value = obj.Get(key);
   if (value.IsNumber()) {
-    return static_cast<uint32_t>(value.As<Number>().Uint32Value());
+    return static_cast<uint32_t>(value.As<Napi::Number>().Uint32Value());
   }
   return fallback;
 }
 
-vector<float> ParseFloat32Array(const Object& inputObj, const char* key, size_t expectedLength) {
-  const Value value = inputObj.Get(key);
+std::vector<float> ParseFloat32Array(const Napi::Object& inputObj, const char* key, size_t expectedLength) {
+  const Napi::Value value = inputObj.Get(key);
   if (!value.IsTypedArray()) {
-    throw runtime_error(string(key) + " must be a Float32Array.");
+    throw std::runtime_error(std::string(key) + " must be a Float32Array.");
   }
 
-  const TypedArray typedArray = value.As<TypedArray>();
+  const Napi::TypedArray typedArray = value.As<Napi::TypedArray>();
   if (typedArray.TypedArrayType() != napi_float32_array) {
-    throw runtime_error(string(key) + " must be a Float32Array.");
+    throw std::runtime_error(std::string(key) + " must be a Float32Array.");
   }
 
-  const Float32Array array = value.As<Float32Array>();
+  const Napi::Float32Array array = value.As<Napi::Float32Array>();
   if (array.ElementLength() != expectedLength) {
-    throw runtime_error(string(key) + " has invalid length.");
+    throw std::runtime_error(std::string(key) + " has invalid length.");
   }
 
-  vector<float> out(expectedLength);
-  memcpy(out.data(), array.Data(), expectedLength * sizeof(float));
+  std::vector<float> out(expectedLength);
+  std::memcpy(out.data(), array.Data(), expectedLength * sizeof(float));
   return out;
 }
 
 } // namespace
 
-CudaMatrixRequest ParseCudaMatrixRequest(const CallbackInfo& info) {
+CudaMatrixRequest ParseCudaMatrixRequest(const Napi::CallbackInfo& info) {
   if (info.Length() < 1 || !info[0].IsObject()) {
-    throw runtime_error("multiplyMatrixCuda expects an options object.");
+    throw std::runtime_error("multiplyMatrixCuda expects an options object.");
   }
 
-  const Object options = info[0].As<Object>();
+  const Napi::Object options = info[0].As<Napi::Object>();
 
   CudaMatrixRequest request;
-  request.size = options.Get("size").As<Number>().Int32Value();
+  request.size = options.Get("size").As<Napi::Number>().Int32Value();
   request.optimized = GetBoolProperty(options, "optimized", false);
   request.readback = GetBoolProperty(options, "readback", true);
   request.randomInput = GetStringProperty(options, "inputMode", "random") != "custom";
   const float randomMin = GetFloatProperty(options, "randomMin", 0.0F);
   const float randomMax = GetFloatProperty(options, "randomMax", 1.0F);
-  request.randomMin = min(randomMin, randomMax);
-  request.randomMax = max(randomMin, randomMax);
+  request.randomMin = std::min(randomMin, randomMax);
+  request.randomMax = std::max(randomMin, randomMax);
   request.randomSeed = GetUint32Property(options, "randomSeed", 0U);
 
   if (request.size <= 0) {
-    throw runtime_error("size must be a positive integer.");
+    throw std::runtime_error("size must be a positive integer.");
   }
 
   const auto totalElements = static_cast<size_t>(request.size) * static_cast<size_t>(request.size);
-  if (totalElements > (numeric_limits<size_t>::max() / sizeof(float))) {
-    throw runtime_error("Requested matrix size is too large.");
+  if (totalElements > (std::numeric_limits<size_t>::max() / sizeof(float))) {
+    throw std::runtime_error("Requested matrix size is too large.");
   }
 
   if (!request.randomInput) {
@@ -102,16 +101,16 @@ CudaMatrixRequest ParseCudaMatrixRequest(const CallbackInfo& info) {
   return request;
 }
 
-CudaMatrixWorker::CudaMatrixWorker(Env env, const CudaMatrixRequest& request)
-  : AsyncWorker(env),
-    deferred_(Promise::Deferred::New(env)),
+CudaMatrixWorker::CudaMatrixWorker(Napi::Env env, const CudaMatrixRequest& request)
+  : Napi::AsyncWorker(env),
+    deferred_(Napi::Promise::Deferred::New(env)),
     request_(request) {}
 
 CudaMatrixWorker::~CudaMatrixWorker() {
   Cleanup();
 }
 
-Promise CudaMatrixWorker::GetPromise() const {
+Napi::Promise CudaMatrixWorker::GetPromise() const {
   return deferred_.Promise();
 }
 
@@ -168,54 +167,54 @@ void CudaMatrixWorker::Execute() {
       output_.resize(matrixElements);
       CUDA_CHECK_THROW(cudaMemcpy(output_.data(), dMatrixC_, matrixBytes, cudaMemcpyDeviceToHost));
     }
-  } catch (const exception& ex) {
+  } catch (const std::exception& ex) {
     SetError(ex.what());
   }
 }
 
 void CudaMatrixWorker::OnOK() {
-  HandleScope scope(Env());
+  Napi::HandleScope scope(Env());
   deferred_.Resolve(BuildResult(Env()));
 }
 
-void CudaMatrixWorker::OnError(const Error& error) {
-  HandleScope scope(Env());
+void CudaMatrixWorker::OnError(const Napi::Error& error) {
+  Napi::HandleScope scope(Env());
   deferred_.Reject(error.Value());
 }
 
-Value CudaMatrixWorker::BuildResult(Env env) const {
-  Object result = Object::New(env);
+Napi::Value CudaMatrixWorker::BuildResult(Napi::Env env) const {
+  Napi::Object result = Napi::Object::New(env);
 
   if (request_.readback) {
-    ArrayBuffer outputBuffer = ArrayBuffer::New(env, output_.size() * sizeof(float));
-    memcpy(outputBuffer.Data(), output_.data(), output_.size() * sizeof(float));
-    result.Set("output", Float32Array::New(env, output_.size(), outputBuffer, 0));
+    Napi::ArrayBuffer outputBuffer = Napi::ArrayBuffer::New(env, output_.size() * sizeof(float));
+    std::memcpy(outputBuffer.Data(), output_.data(), output_.size() * sizeof(float));
+    result.Set("output", Napi::Float32Array::New(env, output_.size(), outputBuffer, 0));
   } else {
     result.Set("output", env.Null());
   }
 
   if (generationDurationMs_.has_value()) {
-    result.Set("generationDurationMs", Number::New(env, generationDurationMs_.value()));
+    result.Set("generationDurationMs", Napi::Number::New(env, generationDurationMs_.value()));
   } else {
     result.Set("generationDurationMs", env.Null());
   }
 
-  result.Set("multiplyDurationMs", Number::New(env, multiplyDurationMs_));
-  result.Set("totalDurationMs", Number::New(env, totalDurationMs_));
-  result.Set("timingSource", String::New(env, "gpu-timestamp"));
+  result.Set("multiplyDurationMs", Napi::Number::New(env, multiplyDurationMs_));
+  result.Set("totalDurationMs", Napi::Number::New(env, totalDurationMs_));
+  result.Set("timingSource", Napi::String::New(env, "gpu-timestamp"));
 
-  Object memory = Object::New(env);
-  memory.Set("gpuAllocatedBytes", Number::New(env, static_cast<double>(gpuAllocatedBytes_)));
-  memory.Set("gpuAllocatedMiB", Number::New(env, ToMiB(gpuAllocatedBytes_)));
-  memory.Set("hostAllocatedBytes", Number::New(env, static_cast<double>(hostAllocatedBytes_)));
-  memory.Set("hostAllocatedMiB", Number::New(env, ToMiB(hostAllocatedBytes_)));
+  Napi::Object memory = Napi::Object::New(env);
+  memory.Set("gpuAllocatedBytes", Napi::Number::New(env, static_cast<double>(gpuAllocatedBytes_)));
+  memory.Set("gpuAllocatedMiB", Napi::Number::New(env, ToMiB(gpuAllocatedBytes_)));
+  memory.Set("hostAllocatedBytes", Napi::Number::New(env, static_cast<double>(hostAllocatedBytes_)));
+  memory.Set("hostAllocatedMiB", Napi::Number::New(env, ToMiB(hostAllocatedBytes_)));
   result.Set("memoryEstimate", memory);
 
   return result;
 }
 
 double CudaMatrixWorker::ToMiB(size_t bytes) {
-  return round((static_cast<double>(bytes) / (1024.0 * 1024.0)) * 1000.0) / 1000.0;
+  return std::round((static_cast<double>(bytes) / (1024.0 * 1024.0)) * 1000.0) / 1000.0;
 }
 
 void CudaMatrixWorker::Cleanup() {
@@ -250,23 +249,23 @@ void CudaMatrixWorker::Cleanup() {
   }
 }
 
-Value MultiplyMatrixCuda(const CallbackInfo& info) {
-  Env env = info.Env();
+Napi::Value MultiplyMatrixCuda(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
 
   try {
     const CudaMatrixRequest request = ParseCudaMatrixRequest(info);
     auto* worker = new CudaMatrixWorker(env, request);
-    Promise promise = worker->GetPromise();
+    Napi::Promise promise = worker->GetPromise();
     worker->Queue();
     return promise;
-  } catch (const exception& ex) {
-    Error::New(env, ex.what()).ThrowAsJavaScriptException();
+  } catch (const std::exception& ex) {
+    Napi::Error::New(env, ex.what()).ThrowAsJavaScriptException();
     return env.Undefined();
   }
 }
 
-Object Init(Env env, Object exports) {
-  exports.Set("multiplyMatrixCuda", Function::New(env, MultiplyMatrixCuda));
+Napi::Object Init(Napi::Env env, Napi::Object exports) {
+  exports.Set("multiplyMatrixCuda", Napi::Function::New(env, MultiplyMatrixCuda));
   return exports;
 }
 
