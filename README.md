@@ -27,6 +27,13 @@ Swagger UI:       http://localhost:3000/docs
 Request timeout (server-side) defaults to 1 hour via `SERVER_REQUEST_TIMEOUT_MS=3600000`.
 Set `SERVER_REQUEST_TIMEOUT_MS=0` to disable request timeout completely.
 
+CUDA runtime policy:
+- `CUDA_ENABLED=auto` (default): CUDA is enabled only when NVIDIA GPU is detected and native addon exists.
+- `CUDA_ENABLED=false`: hard-disable CUDA backend (no C++ addon loading).
+- `CUDA_ENABLED=true`: allow CUDA path, but it still requires NVIDIA GPU + built addon.
+
+When CUDA is unavailable, `POST /matrix/multiply` with `backend: "cuda"` returns `400 cuda_unavailable`.
+
 ## Project Structure
 
 ```
@@ -116,33 +123,7 @@ curl -X POST http://localhost:3000/matrix/multiply \
   }'
 ```
 
-Example response:
-
-```json
-{
-  "backend": "webgpu",
-  "size": 3,
-  "inputMode": "custom",
-  "optimized": true,
-  "serverDurationMs": 0.456,
-  "generationDurationMs": null,
-  "multiplyDurationMs": 0.123,
-  "totalDurationMs": 0.123,
-  "timingSource": "gpu-timestamp",
-  "memoryEstimate": {
-    "gpuAllocatedBytes": 112,
-    "gpuAllocatedMiB": 0,
-    "hostAllocatedBytes": 108,
-    "hostAllocatedMiB": 0
-  },
-  "gflops": 0,
-  "matrixC": [
-    [30, 24, 18],
-    [84, 69, 54],
-    [138, 114, 90]
-  ]
-}
-```
+Response includes measured `processMemory` (`before`, `after`) from `process.memoryUsage()` for the exact request, instead of synthetic memory estimates.
 
 ## Scripts
 

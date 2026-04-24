@@ -60,9 +60,40 @@ export interface AdapterInfo {
   architecture: string
   description:  string
   deviceId:     number
-  backendType:  string
-  deviceType:   string
+  backend:      string
   driver:       string
+}
+
+function normalizeString(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  if (trimmed.toLowerCase() === 'unknown') return null
+  return trimmed
+}
+
+function firstKnownString(...values: unknown[]): string | null {
+  for (const value of values) {
+    const normalized = normalizeString(value)
+    if (normalized) return normalized
+  }
+  return null
+}
+
+function inferBackendFromDescription(description: string): string | null {
+  const lower = description.toLowerCase()
+  if (lower.includes('d3d12') || lower.includes('direct3d 12')) return 'd3d12'
+  if (lower.includes('d3d11') || lower.includes('direct3d 11')) return 'd3d11'
+  if (lower.includes('vulkan')) return 'vulkan'
+  if (lower.includes('metal')) return 'metal'
+  if (lower.includes('opengl')) return 'opengl'
+  return null
+}
+
+function inferDriverFromDescription(description: string): string | null {
+  const match = description.match(/driver\s+version\s+([0-9.]+)/i)
+  if (!match) return null
+  return normalizeString(match[1])
 }
 
 /**
@@ -77,14 +108,29 @@ export async function getAdapterInfo(adapter: GPUAdapter): Promise<AdapterInfo> 
       ? await a.requestAdapterInfo()
       : (a.info ?? {})
 
+  const rawRecord = raw as Record<string, unknown>
+  const description = String(rawRecord.description ?? 'unknown')
+
+  const backend = firstKnownString(
+    rawRecord.backendType,
+    rawRecord.backend,
+    inferBackendFromDescription(description),
+  )
+
+  const driver = firstKnownString(
+    rawRecord.driver,
+    rawRecord.driverInfo,
+    rawRecord.driverVersion,
+    inferDriverFromDescription(description),
+  )
+
   return {
-    vendor:       String(raw.vendor       ?? 'unknown'),
-    architecture: String(raw.architecture ?? 'unknown'),
-    description:  String(raw.description  ?? 'unknown'),
-    deviceId:     Number(raw.deviceId     ?? 0),
-    backendType:  String(raw.backendType  ?? 'unknown'),
-    deviceType:   String(raw.deviceType   ?? 'unknown'),
-    driver:       String(raw.driver       ?? 'unknown'),
+    vendor:       String(rawRecord.vendor       ?? 'unknown'),
+    architecture: String(rawRecord.architecture ?? 'unknown'),
+    description,
+    deviceId:     Number(rawRecord.deviceId     ?? 0),
+    backend:      backend ?? 'unknown',
+    driver:       driver ?? 'unknown',
   }
 }
 

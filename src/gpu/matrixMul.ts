@@ -29,16 +29,8 @@ export interface MatrixGpuTimings {
   timingSource: TimingSource
 }
 
-export interface MatrixMemoryEstimate {
-  gpuAllocatedBytes: number
-  gpuAllocatedMiB: number
-  hostAllocatedBytes: number
-  hostAllocatedMiB: number
-}
-
 export interface MatrixMulWebGpuResult extends MatrixGpuTimings {
   output: Float32Array | null
-  memoryEstimate: MatrixMemoryEstimate
 }
 
 const matrixMulPipelineCache = new WeakMap<GPUDevice, GPUComputePipeline>()
@@ -152,19 +144,6 @@ function createRandomParamsData(size: number, seed: number, minValue: number, ma
   return data
 }
 
-function toMiB(bytes: number): number {
-  return bytes / (1024 * 1024)
-}
-
-function createMemoryEstimate(gpuAllocatedBytes: number, hostAllocatedBytes: number): MatrixMemoryEstimate {
-  return {
-    gpuAllocatedBytes,
-    gpuAllocatedMiB: Number(toMiB(gpuAllocatedBytes).toFixed(3)),
-    hostAllocatedBytes,
-    hostAllocatedMiB: Number(toMiB(hostAllocatedBytes).toFixed(3)),
-  }
-}
-
 function computeDispatchGrid(totalWorkgroups: number, maxPerDimension: number): [number, number, number] {
   const x = Math.min(totalWorkgroups, maxPerDimension)
   const remainingAfterX = Math.ceil(totalWorkgroups / x)
@@ -256,15 +235,6 @@ export async function multiplySquareMatricesWebGpu(
       })
     : null
 
-  const gpuAllocatedBytes =
-    dims.byteLength +
-    outputByteLength * 3 +
-    (readbackBuffer ? outputByteLength : 0) +
-    (queryResolveBuffer ? 16 : 0) +
-    (queryReadbackBuffer ? 16 : 0)
-  const hostAllocatedBytes = matrixA.byteLength + matrixB.byteLength + (readbackBuffer ? outputByteLength : 0)
-  const memoryEstimate = createMemoryEstimate(gpuAllocatedBytes, hostAllocatedBytes)
-
   try {
     device.queue.writeBuffer(dimsBuffer, 0, dims)
     device.queue.writeBuffer(matrixABuffer, 0, matrixA)
@@ -354,7 +324,6 @@ export async function multiplySquareMatricesWebGpu(
       multiplyDurationMs,
       totalDurationMs: multiplyDurationMs,
       timingSource,
-      memoryEstimate,
     }
   } finally {
     dimsBuffer.destroy()
@@ -452,16 +421,6 @@ export async function multiplyRandomSquareMatricesWebGpu(
         usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
       })
     : null
-
-  const gpuAllocatedBytes =
-    randomParams.byteLength +
-    dims.byteLength +
-    outputByteLength * 3 +
-    (readbackBuffer ? outputByteLength : 0) +
-    (queryResolveBuffer ? 32 : 0) +
-    (queryReadbackBuffer ? 32 : 0)
-  const hostAllocatedBytes = randomParams.byteLength + dims.byteLength + (readbackBuffer ? outputByteLength : 0)
-  const memoryEstimate = createMemoryEstimate(gpuAllocatedBytes, hostAllocatedBytes)
 
   try {
     device.queue.writeBuffer(randomParamsBuffer, 0, randomParams)
@@ -582,7 +541,6 @@ export async function multiplyRandomSquareMatricesWebGpu(
       multiplyDurationMs,
       totalDurationMs,
       timingSource,
-      memoryEstimate,
     }
   } finally {
     randomParamsBuffer.destroy()

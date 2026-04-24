@@ -24,7 +24,6 @@ async function main() {
         multiplyDurationMs: Number(result.multiplyDurationMs.toFixed(4)),
         totalDurationMs: Number(result.totalDurationMs.toFixed(4)),
         outputLength: result.output?.length ?? 0,
-        memoryEstimate: result.memoryEstimate,
       },
       null,
       2,

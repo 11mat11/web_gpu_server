@@ -1,9 +1,8 @@
+import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-
-import type { MatrixMemoryEstimate } from '../gpu/matrixMul.js'
 
 type CudaInputMode = 'random' | 'custom'
 
@@ -13,7 +12,6 @@ type NativeCudaResult = {
   multiplyDurationMs: number
   totalDurationMs: number
   timingSource: 'gpu-timestamp'
-  memoryEstimate: MatrixMemoryEstimate
 }
 
 type NativeCudaAddon = {
@@ -38,10 +36,50 @@ export interface MultiplyMatrixCudaResult {
   multiplyDurationMs: number
   totalDurationMs: number
   timingSource: 'gpu-timestamp'
-  memoryEstimate: MatrixMemoryEstimate
+}
+
+export interface CudaRuntimeState {
+  enabled: boolean
+  reason: string
 }
 
 let cachedAddon: NativeCudaAddon | null = null
+let cachedRuntimeState: CudaRuntimeState | null = null
+
+function parseBooleanEnv(raw: string | undefined): boolean | null {
+  if (raw === undefined) {
+    return null
+  }
+
+  const normalized = raw.trim().toLowerCase()
+  if (normalized === 'auto') {
+    return null
+  }
+
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) {
+    return true
+  }
+  if (['0', 'false', 'no', 'off'].includes(normalized)) {
+    return false
+  }
+
+  console.warn(`[CUDA] Ignoring invalid CUDA_ENABLED value: "${raw}". Use true/false.`)
+  return null
+}
+
+function hasNvidiaGpu(): boolean {
+  try {
+    const output = execFileSync('nvidia-smi', ['--query-gpu=name', '--format=csv,noheader'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 2000,
+    }).trim()
+
+    return output.length > 0
+  } catch {
+    return false
+  }
+}
 
 function getSeed(seed?: number): number {
   if (typeof seed === 'number' && Number.isFinite(seed)) {
@@ -52,7 +90,7 @@ function getSeed(seed?: number): number {
   return (coarse ^ fine) >>> 0
 }
 
-function resolveAddonPath(): string {
+function resolveAddonPath(): string | null {
   const currentFilePath = fileURLToPath(import.meta.url)
   const rootDir = path.resolve(path.dirname(currentFilePath), '..', '..')
   const releasePath = path.join(rootDir, 'build', 'Release', 'cuda_matrix_addon.node')
@@ -65,9 +103,45 @@ function resolveAddonPath(): string {
     return debugPath
   }
 
-  throw new Error(
-    'CUDA addon is not built. Run "npm run build:native" first and ensure CUDA Toolkit is installed.',
-  )
+  return null
+}
+
+export function getCudaRuntimeState(): CudaRuntimeState {
+  if (cachedRuntimeState) {
+    return cachedRuntimeState
+  }
+
+  const envEnabled = parseBooleanEnv(process.env.CUDA_ENABLED)
+  if (envEnabled === false) {
+    cachedRuntimeState = {
+      enabled: false,
+      reason: 'disabled by CUDA_ENABLED=false',
+    }
+    return cachedRuntimeState
+  }
+
+  if (!hasNvidiaGpu()) {
+    cachedRuntimeState = {
+      enabled: false,
+      reason: 'no NVIDIA GPU detected (nvidia-smi unavailable or no devices)',
+    }
+    return cachedRuntimeState
+  }
+
+  const addonPath = resolveAddonPath()
+  if (!addonPath) {
+    cachedRuntimeState = {
+      enabled: false,
+      reason: 'CUDA addon not built (missing build/Release|Debug/cuda_matrix_addon.node)',
+    }
+    return cachedRuntimeState
+  }
+
+  cachedRuntimeState = {
+    enabled: true,
+    reason: envEnabled === true ? 'enabled by CUDA_ENABLED=true' : 'enabled (auto-detected NVIDIA + addon present)',
+  }
+  return cachedRuntimeState
 }
 
 function getAddon(): NativeCudaAddon {
@@ -75,8 +149,16 @@ function getAddon(): NativeCudaAddon {
     return cachedAddon
   }
 
+  const state = getCudaRuntimeState()
+  if (!state.enabled) {
+    throw new Error(`CUDA backend is unavailable: ${state.reason}`)
+  }
+
   const require = createRequire(import.meta.url)
   const addonPath = resolveAddonPath()
+  if (!addonPath) {
+    throw new Error('CUDA addon path could not be resolved at runtime.')
+  }
   cachedAddon = require(addonPath) as NativeCudaAddon
   return cachedAddon
 }
@@ -112,7 +194,6 @@ export async function multiplyMatrixCuda(params: MultiplyMatrixCudaParams): Prom
     multiplyDurationMs: result.multiplyDurationMs,
     totalDurationMs: result.totalDurationMs,
     timingSource: result.timingSource,
-    memoryEstimate: result.memoryEstimate,
   }
 }
 
