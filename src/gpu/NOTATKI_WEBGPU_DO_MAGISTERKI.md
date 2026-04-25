@@ -1,31 +1,102 @@
-# Notatki robocze - WebGPU (porownanie z CUDA)
+# Notatki robocze - WebGPU (matrix + AI pipeline)
 
-To jest notatka przypominajaca do pracy magisterskiej, opisujaca jak dziala moja sciezka WebGPU dla mnozenia macierzy i skad biora sie metryki czasu oraz GFLOPS. Celem nie jest gotowy rozdzial do wklejenia, tylko jasny opis logiki kodu, zebym szybko mogl odtworzyc kontekst podczas pisania i porownan z CUDA.
+To jest notatka techniczna do pracy magisterskiej. Opisuje aktualna sciezke WebGPU w serwerze Node.js: baseline matrix multiply oraz pipeline AI (MLP i Advanced VGG CNN).
 
-Plik `device.ts` odpowiada za uruchomienie i utrzymanie srodowiska WebGPU po stronie Node. To tutaj nastepuje inicjalizacja adaptera i urzadzenia, ustawianie wymaganych limitow oraz ewentualne wlaczenie wsparcia dla `timestamp-query`, jesli sprzet je oferuje. W praktyce ten plik decyduje, czy pomiar czasu na GPU bedzie mozliwy i jak duze zadania da sie uruchomic bez przekroczenia limitow buforow. Istotne jest tez to, ze urzadzenie jest cache'owane, wiec nie tworzę go od nowa dla kazdego requestu.
+## 1) Inicjalizacja i runtime
 
-Plik `matrixMul.ts` jest glownym miejscem wykonania obliczen. Zawiera dwie podstawowe sciezki: mnozenie macierzy przekazanych jawnie oraz mnozenie macierzy najpierw wygenerowanych losowo na GPU. W tym pliku tworzę bufory, bind groupy, compute passy i dispatch workgroupow, a potem zbieram metryki czasu. Logika pomiaru jest dwutorowa: jezeli dostepne sa timestampy GPU, czas liczy sie z roznicy znacznikow zapisanych przez urzadzenie; jezeli nie, kod przechodzi na zegar CPU i mierzy czas od wyslania pracy do zakonczenia synchronizacji. Tu tez wyliczane sa pola `generationDurationMs`, `multiplyDurationMs`, `totalDurationMs` oraz `timingSource`, wiec `matrixMul.ts` jest kluczowy przy interpretacji, czy porownujemy czysty czas kernela, czy czas z narzutem hosta.
+`device.ts` odpowiada za:
 
-Plik `matrixMul.wgsl` implementuje wariant naiwny GEMM. Jeden watek liczy jeden element macierzy wynikowej i wykonuje pelna petle po wymiarze `k`. Ten wariant ma zlozonosc O(N^3) i sluzy jako baseline, bo jest najlatwiejszy do zrozumienia i dobrze pokazuje koszt odczytow z pamieci globalnej bez optymalizacji kafelkowaniem. Dla porownania z CUDA to odpowiednik prostego kernela referencyjnego.
+- bootstrap WebGPU w Node,
+- cache adaptera i urzadzenia,
+- negocjacje feature `timestamp-query`,
+- serializacje limitow i wymagane limity urzadzenia.
 
-Plik `matrixMulTiled.wgsl` implementuje wariant zoptymalizowany, oparty o tiling i pamiec wspoldzielona workgroupy. Dane sa ladowane do `tileA` i `tileB`, a kazdy watek liczy cztery elementy wyniku (uklad 2x2 na watek), co zwieksza wykorzystanie danych juz zaladowanych lokalnie. W kodzie wystepuja bariery synchronizacji, zeby wszystkie watki zakonczly ladowanie tile przed faza mnozenia i akumulacji. Dodatkowy padding w tablicach tile pomaga ograniczac konflikty bankow. W praktyce ten shader odpowiada za tryb `optimized=true` i to on jest glownym kandydatem do porownan wydajnosciowych z tiled/shared-memory po stronie CUDA.
+To ten plik decyduje, czy metryki czasu beda mogly pochodzic z hardware timestampow GPU.
 
-Plik `randomFill.wgsl` odpowiada za generowanie danych wejsciowych A i B bezposrednio na GPU. Korzysta z funkcji haszujacej i seedu, a nastepnie mapuje wartosci do zadanego zakresu. Dzieki temu mozna mierzyc scenariusz bardziej zblizony do "pelnego pipeline" po stronie urzadzenia, bez kosztu generacji na CPU i kopiowania gotowych danych z hosta. To ma znaczenie zwlaszcza wtedy, gdy chce porownac nie tylko samo mnozenie, ale caly etap przygotowania danych i obliczen.
+## 2) Matrix baseline
 
-Plik `stressTouch.wgsl` nie implementuje mnozenia macierzy, tylko prosty kernel do dotykania pamieci bufora wedlug kroku (`stepWords`) i seedu. To narzedzie pomocnicze do testow zachowania pamieci i obciazenia, przydatne gdy chce oddzielic problemy przepustowosci od problemow stricte arytmetycznych.
+Sciezka matrix (`matrixMul.ts` + `matrixMul.wgsl` + `matrixMulTiled.wgsl`) pozostaje punktem odniesienia dla porownan CUDA/WebGPU.
 
-Wartosci czasowe w wynikach trzeba czytac ostroznie. Dla wejscia niestandardowego (`custom`) w WebGPU czas generacji jest pusty (`generationDurationMs = null`), bo kod nie uruchamia etapu losowania na GPU. Dla wejscia losowego (`random`) uruchamiane sa dwa passy: generacja i mnozenie, wiec przy aktywnych timestampach mam osobne czasy obu etapow i ich sume. Jezeli timestamp-query nie jest dostepne, metryki opieraja sie na zegarze CPU i obejmuja wiecej narzutu zwiazanego z synchronizacja oraz kolejkowaniem pracy, a nie tylko samo wykonanie kernela.
+- wariant naive: prosty GEMM,
+- wariant tiled: workgroup memory i lepsza lokalnosc.
 
-GFLOPS liczony jest poza shaderami, w warstwie API, na podstawie klasycznego przyblizenia liczby operacji dla GEMM: `2 * N^3`. Ta liczba jest dzielona przez czas mnozenia (w sekundach), a wynik skaluje sie do miliardow FLOP/s. Wazne jest, ze mianownik bierze `multiplyDurationMs` (a gdy go brak, czas obliczen po stronie serwera), dlatego porownanie GFLOPS ma sens tylko wtedy, gdy porownywane pomiary maja ten sam charakter. Innymi slowy: nie nalezy mieszac wynikow z `gpu-timestamp` i `cpu-clock` bez wyraznego zaznaczenia, bo wtedy porownuje sie nie to samo.
+Wynik i metryki sa zwracane przez API z `timingSource`:
 
-W kontekscie porownania z CUDA najwazniejsze jest utrzymanie tej samej metodologii: ten sam rozmiar macierzy, ten sam tryb danych (`random` albo `custom`), ten sam wariant kernela (`naive` albo `tiled`), ta sama decyzja o readback oraz ta sama definicja czasu. Dopiero wtedy roznice w GFLOPS i czasach maja wartosc analityczna i moga byc sensownie interpretowane w pracy.
+- `gpu-timestamp` gdy dostepny `timestamp-query`,
+- `cpu-clock` jako fallback.
 
-## Dodatkowy blok - skad bierze sie `memoryEstimate`
+## 3) MLP inferencja WebGPU
 
-Wartosci pamieci nie sa mierzone przez profiler runtime, tylko liczone deterministycznie w `matrixMul.ts` jako suma rozmiarow buforow tworzonych przez kod. Dla sciezki `multiplySquareMatricesWebGpu` (wejscie custom) `gpuAllocatedBytes` to: bufor `dims` + trzy glowne bufory macierzy (`A`, `B`, `C`) + opcjonalny bufor readback + opcjonalne bufory query (`resolve` i `readback` po 16 bajtow). `hostAllocatedBytes` to dane obecne po stronie hosta: `matrixA` + `matrixB` + opcjonalna kopia wyniku, jesli wlaczone jest readback.
+`mlp-runner.ts` realizuje persistent model buffers i 3-pass inferencje:
 
-Dla sciezki `multiplyRandomSquareMatricesWebGpu` (wejscie random) logika jest analogiczna, ale pojawia sie jeszcze bufor parametrow losowania. W tym wariancie `gpuAllocatedBytes` obejmuje: `randomParams` + `dims` + trzy bufory macierzy + opcjonalny readback + opcjonalne bufory query (tym razem po 32 bajty, bo sa 4 znaczniki). `hostAllocatedBytes` obejmuje tylko to, co rzeczywiscie jest utrzymywane po stronie CPU w tym przeplywie: `randomParams`, `dims` i opcjonalny bufor na wynik readback.
+1. GEMV + ReLU (input -> hidden1),
+2. GEMV + ReLU (hidden1 -> hidden2),
+3. GEMV bez ReLU (hidden2 -> logits).
 
-Pola `gpuAllocatedMiB` i `hostAllocatedMiB` to te same wartosci po przeliczeniu przez `bytes / (1024 * 1024)` i zaokragleniu do 3 miejsc po przecinku. Czyli te liczby to swiadoma estymacja alokacji z kodu, a nie bezposredni odczyt z narzedzi typu Nsight.
+Softmax liczony jest po stronie Node.js (w `AiManager`), po odczycie 10 logitow.
 
+## 4) CNN inferencja WebGPU - Advanced VGG
 
+`cnn-runner.ts` + `shaders/cnn.wgsl` realizuja nowa architekture Advanced VGG dla CIFAR-10.
+
+### Wejscie i wyjscie
+
+- wejscie: `3 x 128 x 128` (CHW, 49152 float),
+- wyjscie: 10 logitow.
+
+### Layout wag i offsety
+
+Wagi sa ladowane z jednego pliku `.bin` wedlug stalej kolejnosci segmentow:
+
+- conv1, conv2, conv3, conv4,
+- dense1 (flatten 8192 -> 256),
+- dense2 (256 -> 10),
+- odpowiednie biasy.
+
+`cnnLayout.totalWeightCount` musi byc zgodny z realnym plikiem wag.
+
+### Pipeline wykonania (10 passow)
+
+1. Conv1 + ReLU -> `[32, 128, 128]`
+2. MaxPool1 -> `[32, 64, 64]`
+3. Conv2 + ReLU -> `[64, 64, 64]`
+4. MaxPool2 -> `[64, 32, 32]`
+5. Conv3 + ReLU -> `[128, 32, 32]`
+6. MaxPool3 -> `[128, 16, 16]`
+7. Conv4 + ReLU -> `[128, 16, 16]`
+8. MaxPool4 -> `[128, 8, 8]`
+9. Dense1 + ReLU (`8192 -> 256`)
+10. Dense2 bez ReLU (`256 -> 10`)
+
+Wszystkie mapy cech zostaja na GPU. Odczyt CPU jest tylko po ostatnim passie.
+
+## 5) `layout: 'auto'` i stabilnosc BindGroupLayout
+
+W `cnn.wgsl` kernel `maxPool2x2` ma jawne dummy read z `weightsBuf` i `biasBuf`. Powod:
+
+- przy `layout: 'auto'` kompilator moze usuwac nieuzywane bindingi,
+- wtedy layout potoku pool nie zgadza sie z bind group tworzona w TS,
+- skutkuje to bledami `Invalid ComputePipeline` / `Invalid BindGroupLayout`.
+
+Dummy read utrzymuje stabilny kontrakt bindingow miedzy shaderem i `cnn-runner.ts`.
+
+## 6) WGSL strict typing
+
+W `cnn.wgsl` trzeba pilnowac scislego typowania:
+
+- literały `i32` z `1i`, `0i` w arytmetyce indeksow,
+- literały `u32` z `u` w petlach i dzieleniu,
+- literały `f32` z `0.0f` / `-1000000.0f`.
+
+To ogranicza ryzyko bledow kompilacji shaderow i kaskady bledow walidacji WebGPU.
+
+## 7) Metryki czasu i pamieci
+
+`cnn-runner.ts` korzysta z query set timestampow i sumuje czasy etapow inferencji. Gdy `timestamp-query` nie jest dostepne, fallback to `cpu-clock`.
+
+`memoryEstimate` to estymacja oparta o jawne bufory:
+
+- osobno dla modelu,
+- agregowana wyzej przez `AiManager`.
+
+Te wartosci sa deterministiczne (z kodu), nie sa odczytem z profilerow runtime.

@@ -22,16 +22,22 @@ constexpr int kMlpOutputSize = 10;
 constexpr int kCnnInputChannels = 3;
 constexpr int kCnnInputHeight = 128;
 constexpr int kCnnInputWidth = 128;
-constexpr int kCnnConv1OutChannels = 16;
-constexpr int kCnnConv2OutChannels = 32;
-constexpr int kCnnDense1Out = 128;
+constexpr int kCnnConv1OutChannels = 32;
+constexpr int kCnnConv2OutChannels = 64;
+constexpr int kCnnConv3OutChannels = 128;
+constexpr int kCnnConv4OutChannels = 128;
+constexpr int kCnnDense1Out = 256;
 constexpr int kCnnOutputSize = 10;
 
 constexpr int kCnnPool1Height = 64;
 constexpr int kCnnPool1Width = 64;
 constexpr int kCnnPool2Height = 32;
 constexpr int kCnnPool2Width = 32;
-constexpr int kCnnFlattenSize = kCnnConv2OutChannels * kCnnPool2Height * kCnnPool2Width;
+constexpr int kCnnPool3Height = 16;
+constexpr int kCnnPool3Width = 16;
+constexpr int kCnnPool4Height = 8;
+constexpr int kCnnPool4Width = 8;
+constexpr int kCnnFlattenSize = kCnnConv4OutChannels * kCnnPool4Height * kCnnPool4Width;
 
 constexpr size_t kMlpW1Count = static_cast<size_t>(kMlpInputSize) * static_cast<size_t>(kMlpHidden1Size);
 constexpr size_t kMlpB1Count = static_cast<size_t>(kMlpHidden1Size);
@@ -45,6 +51,10 @@ constexpr size_t kCnnConv1WCount = static_cast<size_t>(kCnnConv1OutChannels) * s
 constexpr size_t kCnnConv1BCount = static_cast<size_t>(kCnnConv1OutChannels);
 constexpr size_t kCnnConv2WCount = static_cast<size_t>(kCnnConv2OutChannels) * static_cast<size_t>(kCnnConv1OutChannels) * 3U * 3U;
 constexpr size_t kCnnConv2BCount = static_cast<size_t>(kCnnConv2OutChannels);
+constexpr size_t kCnnConv3WCount = static_cast<size_t>(kCnnConv3OutChannels) * static_cast<size_t>(kCnnConv2OutChannels) * 3U * 3U;
+constexpr size_t kCnnConv3BCount = static_cast<size_t>(kCnnConv3OutChannels);
+constexpr size_t kCnnConv4WCount = static_cast<size_t>(kCnnConv4OutChannels) * static_cast<size_t>(kCnnConv3OutChannels) * 3U * 3U;
+constexpr size_t kCnnConv4BCount = static_cast<size_t>(kCnnConv4OutChannels);
 constexpr size_t kCnnDense1WCount = static_cast<size_t>(kCnnFlattenSize) * static_cast<size_t>(kCnnDense1Out);
 constexpr size_t kCnnDense1BCount = static_cast<size_t>(kCnnDense1Out);
 constexpr size_t kCnnDense2WCount = static_cast<size_t>(kCnnDense1Out) * static_cast<size_t>(kCnnOutputSize);
@@ -54,6 +64,10 @@ constexpr size_t kCnnTotalWeightsCount =
   kCnnConv1BCount +
   kCnnConv2WCount +
   kCnnConv2BCount +
+  kCnnConv3WCount +
+  kCnnConv3BCount +
+  kCnnConv4WCount +
+  kCnnConv4BCount +
   kCnnDense1WCount +
   kCnnDense1BCount +
   kCnnDense2WCount +
@@ -137,6 +151,10 @@ size_t ComputeCnnGpuBytes() {
      kCnnConv1BCount +
      kCnnConv2WCount +
      kCnnConv2BCount +
+     kCnnConv3WCount +
+     kCnnConv3BCount +
+     kCnnConv4WCount +
+     kCnnConv4BCount +
      kCnnDense1WCount +
      kCnnDense1BCount +
      kCnnDense2WCount +
@@ -148,6 +166,10 @@ size_t ComputeCnnGpuBytes() {
      static_cast<size_t>(kCnnConv1OutChannels) * static_cast<size_t>(kCnnPool1Height) * static_cast<size_t>(kCnnPool1Width) +
      static_cast<size_t>(kCnnConv2OutChannels) * static_cast<size_t>(kCnnPool1Height) * static_cast<size_t>(kCnnPool1Width) +
      static_cast<size_t>(kCnnConv2OutChannels) * static_cast<size_t>(kCnnPool2Height) * static_cast<size_t>(kCnnPool2Width) +
+     static_cast<size_t>(kCnnConv3OutChannels) * static_cast<size_t>(kCnnPool2Height) * static_cast<size_t>(kCnnPool2Width) +
+     static_cast<size_t>(kCnnConv3OutChannels) * static_cast<size_t>(kCnnPool3Height) * static_cast<size_t>(kCnnPool3Width) +
+     static_cast<size_t>(kCnnConv4OutChannels) * static_cast<size_t>(kCnnPool3Height) * static_cast<size_t>(kCnnPool3Width) +
+     static_cast<size_t>(kCnnConv4OutChannels) * static_cast<size_t>(kCnnPool4Height) * static_cast<size_t>(kCnnPool4Width) +
      static_cast<size_t>(kCnnDense1Out) +
      static_cast<size_t>(kCnnOutputSize)) * sizeof(float);
 
@@ -183,6 +205,10 @@ struct CudaCnnModelState {
   float* dConv1B = nullptr;
   float* dConv2W = nullptr;
   float* dConv2B = nullptr;
+  float* dConv3W = nullptr;
+  float* dConv3B = nullptr;
+  float* dConv4W = nullptr;
+  float* dConv4B = nullptr;
   float* dDense1W = nullptr;
   float* dDense1B = nullptr;
   float* dDense2W = nullptr;
@@ -193,6 +219,10 @@ struct CudaCnnModelState {
   float* dPool1Out = nullptr;
   float* dConv2Out = nullptr;
   float* dPool2Out = nullptr;
+  float* dConv3Out = nullptr;
+  float* dPool3Out = nullptr;
+  float* dConv4Out = nullptr;
+  float* dPool4Out = nullptr;
   float* dDense1Out = nullptr;
   float* dOut = nullptr;
 
@@ -264,6 +294,22 @@ void FreeCnnModelLocked() {
     cudaFree(gCnnModel.dConv2B);
     gCnnModel.dConv2B = nullptr;
   }
+  if (gCnnModel.dConv3W) {
+    cudaFree(gCnnModel.dConv3W);
+    gCnnModel.dConv3W = nullptr;
+  }
+  if (gCnnModel.dConv3B) {
+    cudaFree(gCnnModel.dConv3B);
+    gCnnModel.dConv3B = nullptr;
+  }
+  if (gCnnModel.dConv4W) {
+    cudaFree(gCnnModel.dConv4W);
+    gCnnModel.dConv4W = nullptr;
+  }
+  if (gCnnModel.dConv4B) {
+    cudaFree(gCnnModel.dConv4B);
+    gCnnModel.dConv4B = nullptr;
+  }
   if (gCnnModel.dDense1W) {
     cudaFree(gCnnModel.dDense1W);
     gCnnModel.dDense1W = nullptr;
@@ -300,6 +346,22 @@ void FreeCnnModelLocked() {
   if (gCnnModel.dPool2Out) {
     cudaFree(gCnnModel.dPool2Out);
     gCnnModel.dPool2Out = nullptr;
+  }
+  if (gCnnModel.dConv3Out) {
+    cudaFree(gCnnModel.dConv3Out);
+    gCnnModel.dConv3Out = nullptr;
+  }
+  if (gCnnModel.dPool3Out) {
+    cudaFree(gCnnModel.dPool3Out);
+    gCnnModel.dPool3Out = nullptr;
+  }
+  if (gCnnModel.dConv4Out) {
+    cudaFree(gCnnModel.dConv4Out);
+    gCnnModel.dConv4Out = nullptr;
+  }
+  if (gCnnModel.dPool4Out) {
+    cudaFree(gCnnModel.dPool4Out);
+    gCnnModel.dPool4Out = nullptr;
   }
   if (gCnnModel.dDense1Out) {
     cudaFree(gCnnModel.dDense1Out);
@@ -728,6 +790,10 @@ public:
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dConv1B), kCnnConv1BCount * sizeof(float)));
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dConv2W), kCnnConv2WCount * sizeof(float)));
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dConv2B), kCnnConv2BCount * sizeof(float)));
+      CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dConv3W), kCnnConv3WCount * sizeof(float)));
+      CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dConv3B), kCnnConv3BCount * sizeof(float)));
+      CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dConv4W), kCnnConv4WCount * sizeof(float)));
+      CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dConv4B), kCnnConv4BCount * sizeof(float)));
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dDense1W), kCnnDense1WCount * sizeof(float)));
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dDense1B), kCnnDense1BCount * sizeof(float)));
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dDense2W), kCnnDense2WCount * sizeof(float)));
@@ -743,6 +809,14 @@ public:
         static_cast<size_t>(kCnnConv2OutChannels) * static_cast<size_t>(kCnnPool1Height) * static_cast<size_t>(kCnnPool1Width) * sizeof(float)));
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dPool2Out),
         static_cast<size_t>(kCnnConv2OutChannels) * static_cast<size_t>(kCnnPool2Height) * static_cast<size_t>(kCnnPool2Width) * sizeof(float)));
+      CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dConv3Out),
+        static_cast<size_t>(kCnnConv3OutChannels) * static_cast<size_t>(kCnnPool2Height) * static_cast<size_t>(kCnnPool2Width) * sizeof(float)));
+      CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dPool3Out),
+        static_cast<size_t>(kCnnConv3OutChannels) * static_cast<size_t>(kCnnPool3Height) * static_cast<size_t>(kCnnPool3Width) * sizeof(float)));
+      CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dConv4Out),
+        static_cast<size_t>(kCnnConv4OutChannels) * static_cast<size_t>(kCnnPool3Height) * static_cast<size_t>(kCnnPool3Width) * sizeof(float)));
+      CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dPool4Out),
+        static_cast<size_t>(kCnnConv4OutChannels) * static_cast<size_t>(kCnnPool4Height) * static_cast<size_t>(kCnnPool4Width) * sizeof(float)));
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dDense1Out), static_cast<size_t>(kCnnDense1Out) * sizeof(float)));
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dOut), static_cast<size_t>(kCnnOutputSize) * sizeof(float)));
 
@@ -755,6 +829,14 @@ public:
       cursor += kCnnConv2WCount;
       CUDA_CHECK_THROW(cudaMemcpy(gCnnModel.dConv2B, cursor, kCnnConv2BCount * sizeof(float), cudaMemcpyHostToDevice));
       cursor += kCnnConv2BCount;
+      CUDA_CHECK_THROW(cudaMemcpy(gCnnModel.dConv3W, cursor, kCnnConv3WCount * sizeof(float), cudaMemcpyHostToDevice));
+      cursor += kCnnConv3WCount;
+      CUDA_CHECK_THROW(cudaMemcpy(gCnnModel.dConv3B, cursor, kCnnConv3BCount * sizeof(float), cudaMemcpyHostToDevice));
+      cursor += kCnnConv3BCount;
+      CUDA_CHECK_THROW(cudaMemcpy(gCnnModel.dConv4W, cursor, kCnnConv4WCount * sizeof(float), cudaMemcpyHostToDevice));
+      cursor += kCnnConv4WCount;
+      CUDA_CHECK_THROW(cudaMemcpy(gCnnModel.dConv4B, cursor, kCnnConv4BCount * sizeof(float), cudaMemcpyHostToDevice));
+      cursor += kCnnConv4BCount;
       CUDA_CHECK_THROW(cudaMemcpy(gCnnModel.dDense1W, cursor, kCnnDense1WCount * sizeof(float), cudaMemcpyHostToDevice));
       cursor += kCnnDense1WCount;
       CUDA_CHECK_THROW(cudaMemcpy(gCnnModel.dDense1B, cursor, kCnnDense1BCount * sizeof(float), cudaMemcpyHostToDevice));
@@ -814,7 +896,10 @@ public:
       return;
     }
 
-    std::array<cudaEvent_t, 12> events = {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
+    std::array<cudaEvent_t, 20> events = {
+      nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+      nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+    };
 
     auto destroyEvents = [&events]() {
       for (cudaEvent_t& event : events) {
@@ -887,8 +972,60 @@ public:
       CUDA_CHECK_THROW(cudaEventRecord(events[7], nullptr));
 
       CUDA_CHECK_THROW(cudaEventRecord(events[8], nullptr));
-      launchMlpGemvKernel(
+      launchCnnConv2dKernel(
         gCnnModel.dPool2Out,
+        gCnnModel.dConv3W,
+        gCnnModel.dConv3B,
+        gCnnModel.dConv3Out,
+        kCnnConv2OutChannels,
+        kCnnConv3OutChannels,
+        kCnnPool2Height,
+        kCnnPool2Width,
+        true,
+        nullptr);
+      CUDA_CHECK_THROW(cudaGetLastError());
+      CUDA_CHECK_THROW(cudaEventRecord(events[9], nullptr));
+
+      CUDA_CHECK_THROW(cudaEventRecord(events[10], nullptr));
+      launchCnnMaxPool2x2Kernel(
+        gCnnModel.dConv3Out,
+        gCnnModel.dPool3Out,
+        kCnnConv3OutChannels,
+        kCnnPool2Height,
+        kCnnPool2Width,
+        nullptr);
+      CUDA_CHECK_THROW(cudaGetLastError());
+      CUDA_CHECK_THROW(cudaEventRecord(events[11], nullptr));
+
+      CUDA_CHECK_THROW(cudaEventRecord(events[12], nullptr));
+      launchCnnConv2dKernel(
+        gCnnModel.dPool3Out,
+        gCnnModel.dConv4W,
+        gCnnModel.dConv4B,
+        gCnnModel.dConv4Out,
+        kCnnConv3OutChannels,
+        kCnnConv4OutChannels,
+        kCnnPool3Height,
+        kCnnPool3Width,
+        true,
+        nullptr);
+      CUDA_CHECK_THROW(cudaGetLastError());
+      CUDA_CHECK_THROW(cudaEventRecord(events[13], nullptr));
+
+      CUDA_CHECK_THROW(cudaEventRecord(events[14], nullptr));
+      launchCnnMaxPool2x2Kernel(
+        gCnnModel.dConv4Out,
+        gCnnModel.dPool4Out,
+        kCnnConv4OutChannels,
+        kCnnPool3Height,
+        kCnnPool3Width,
+        nullptr);
+      CUDA_CHECK_THROW(cudaGetLastError());
+      CUDA_CHECK_THROW(cudaEventRecord(events[15], nullptr));
+
+      CUDA_CHECK_THROW(cudaEventRecord(events[16], nullptr));
+      launchMlpGemvKernel(
+        gCnnModel.dPool4Out,
         gCnnModel.dDense1W,
         gCnnModel.dDense1B,
         gCnnModel.dDense1Out,
@@ -897,9 +1034,9 @@ public:
         true,
         nullptr);
       CUDA_CHECK_THROW(cudaGetLastError());
-      CUDA_CHECK_THROW(cudaEventRecord(events[9], nullptr));
+      CUDA_CHECK_THROW(cudaEventRecord(events[17], nullptr));
 
-      CUDA_CHECK_THROW(cudaEventRecord(events[10], nullptr));
+      CUDA_CHECK_THROW(cudaEventRecord(events[18], nullptr));
       launchMlpGemvKernel(
         gCnnModel.dDense1Out,
         gCnnModel.dDense2W,
@@ -910,11 +1047,11 @@ public:
         false,
         nullptr);
       CUDA_CHECK_THROW(cudaGetLastError());
-      CUDA_CHECK_THROW(cudaEventRecord(events[11], nullptr));
-      CUDA_CHECK_THROW(cudaEventSynchronize(events[11]));
+      CUDA_CHECK_THROW(cudaEventRecord(events[19], nullptr));
+      CUDA_CHECK_THROW(cudaEventSynchronize(events[19]));
 
       float totalMs = 0.0F;
-      for (int i = 0; i < 12; i += 2) {
+      for (int i = 0; i < 20; i += 2) {
         float partMs = 0.0F;
         CUDA_CHECK_THROW(cudaEventElapsedTime(&partMs, events[i], events[i + 1]));
         totalMs += partMs;

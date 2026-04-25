@@ -209,7 +209,7 @@ export class AiManager {
   private constructor() {
     const currentDir = fileURLToPath(new URL('.', import.meta.url))
     this.mlpWeightsPath = resolve(currentDir, './mega_mnist_weights.bin')
-    this.cnnWeightsPath = resolve(currentDir, './cifar10_mini_vgg_weights.bin')
+    this.cnnWeightsPath = resolve(currentDir, './cifar10_weights.bin')
   }
 
   static getInstance(): AiManager {

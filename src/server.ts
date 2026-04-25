@@ -9,7 +9,7 @@ import { gpuStressRoute } from './routes/gpu-stress.js'
 import { imageRoute } from './routes/image.js'
 import { matrixRoute } from './routes/matrix.js'
 import { benchmarkRoute } from './routes/benchmark.js'
-import { aiRoute } from './ai/ai.route.js'
+import { ai } from './routes/ai'
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 60 * 60 * 1000
 
@@ -77,7 +77,7 @@ export async function buildServer() {
   await server.register(imageRoute,      { prefix: '/image' })
   await server.register(matrixRoute,     { prefix: '/matrix' })
   await server.register(benchmarkRoute,  { prefix: '/benchmark' })
-  await server.register(aiRoute,         { prefix: '/ai' })
+  await server.register(ai,         { prefix: '/ai' })
 
   return server
 }

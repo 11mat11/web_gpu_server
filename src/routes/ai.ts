@@ -6,7 +6,7 @@ import {
   predictCnnHandler,
   predictMlpHandler,
   unloadAiModelHandler,
-} from './ai.controller.js'
+} from '../ai/aicontroller'
 
 const aiErrorSchema = {
   type: 'object',
@@ -72,7 +72,7 @@ const modelStatusSchema = {
   },
 } as const
 
-export async function aiRoute(server: FastifyInstance) {
+export async function ai(server: FastifyInstance) {
   server.get(
     '/status',
     {
