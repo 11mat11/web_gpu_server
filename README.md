@@ -68,6 +68,11 @@ src/
 | POST | /image/filter | Run image filter |
 | POST | /matrix/multiply | Run matrix multiply |
 | POST | /benchmark/start | Start benchmark job |
+| GET | /ai/status | AI status for models (`mlp`, `cnn`) and backends |
+| POST | /ai/load | Load selected model (`mlp`/`cnn`) or both |
+| POST | /ai/predict/mlp | Run MLP inference on `webgpu` or `cuda` |
+| POST | /ai/predict/cnn | Run Mini-VGG CNN inference on `webgpu` or `cuda` |
+| POST | /ai/unload | Unload selected model (`mlp`/`cnn`) or both |
 | GET | /benchmark/status/:id | Poll job status |
 | GET | /benchmark/results | All results |
 | DELETE | /benchmark/results | Clear results |
@@ -124,6 +129,52 @@ curl -X POST http://localhost:3000/matrix/multiply \
 ```
 
 Response includes measured `processMemory` (`before`, `after`) from `process.memoryUsage()` for the exact request, instead of synthetic memory estimates.
+
+## AI Multi-Model Pipeline
+
+`POST /ai/load` accepts optional selector:
+
+```json
+{
+  "model": "cnn",
+  "webgpu": true,
+  "cuda": false
+}
+```
+
+- `model`: optional (`"mlp"` or `"cnn"`); when omitted, server tries to load both models
+- `webgpu`/`cuda`: optional backend flags; when omitted, server tries both backends
+
+Wagi:
+
+- MLP: `src/ai/mega_mnist_weights.bin`
+- CNN: `src/ai/cifar10_mini_vgg_weights.bin`
+
+`POST /ai/predict/mlp` expects:
+
+```json
+{
+  "backend": "cuda",
+  "input": [0.0, 0.1, 0.2]
+}
+```
+
+Powyższa tablica `input` jest skrócona tylko poglądowo.
+
+- `backend`: `"cuda"` or `"webgpu"`
+- `input`: exactly `16384` float values
+- response includes: `prediction`, `probabilities`, `gpuDurationMs`, `totalDurationMs`, `timingSource`
+
+`POST /ai/predict/cnn` expects `input` with exactly `49152` float values (`128x128x3`, CHW).
+
+CNN response includes additionally:
+
+- `predictionLabel` (`airplane`, `automobile`, ..., `truck`)
+- `memoryEstimate` for CNN model instance
+
+`GET /ai/status` returns current lifecycle state, loaded models, backend status and memory breakdown per model.
+
+`POST /ai/unload` accepts the same selector as `/ai/load` and releases only selected model/backend resources.
 
 ## Scripts
 

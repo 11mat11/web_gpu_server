@@ -14,8 +14,48 @@ type NativeCudaResult = {
   timingSource: 'gpu-timestamp'
 }
 
+type NativeMlpLoadResult = {
+  status: 'loaded'
+  memoryEstimate: {
+    gpuAllocatedBytes: number
+    gpuAllocatedMiB: number
+    hostAllocatedBytes: number
+    hostAllocatedMiB: number
+  }
+}
+
+type NativeMlpPredictResult = {
+  logits: Float32Array
+  gpuDurationMs: number
+  totalDurationMs: number
+  timingSource: 'gpu-timestamp'
+}
+
+type NativeCnnPredictResult = {
+  logits: Float32Array
+  gpuDurationMs: number
+  totalDurationMs: number
+  timingSource: 'gpu-timestamp'
+  memoryEstimate: {
+    gpuAllocatedBytes: number
+    gpuAllocatedMiB: number
+    hostAllocatedBytes: number
+    hostAllocatedMiB: number
+  }
+}
+
+type NativeMlpUnloadResult = {
+  status: 'unloaded'
+}
+
 type NativeCudaAddon = {
   multiplyMatrixCuda: (params: Record<string, unknown>) => Promise<NativeCudaResult>
+  loadModel: (params: Record<string, unknown>) => Promise<NativeMlpLoadResult>
+  predict: (params: Record<string, unknown>) => Promise<NativeMlpPredictResult>
+  unloadModel: () => Promise<NativeMlpUnloadResult>
+  loadCnnModel: (params: Record<string, unknown>) => Promise<NativeMlpLoadResult>
+  predictCnn: (params: Record<string, unknown>) => Promise<NativeCnnPredictResult>
+  unloadCnnModel: () => Promise<NativeMlpUnloadResult>
 }
 
 export interface MultiplyMatrixCudaParams {
@@ -41,6 +81,37 @@ export interface MultiplyMatrixCudaResult {
 export interface CudaRuntimeState {
   enabled: boolean
   reason: string
+}
+
+export interface CudaMlpMemoryEstimate {
+  gpuAllocatedBytes: number
+  gpuAllocatedMiB: number
+  hostAllocatedBytes: number
+  hostAllocatedMiB: number
+}
+
+export interface CudaMlpLoadResult {
+  status: 'loaded'
+  memoryEstimate: CudaMlpMemoryEstimate
+}
+
+export interface CudaMlpPredictResult {
+  logits: Float32Array
+  gpuDurationMs: number
+  totalDurationMs: number
+  timingSource: 'gpu-timestamp'
+}
+
+export interface CudaCnnPredictResult {
+  logits: Float32Array
+  gpuDurationMs: number
+  totalDurationMs: number
+  timingSource: 'gpu-timestamp'
+  memoryEstimate: CudaMlpMemoryEstimate
+}
+
+export interface CudaMlpUnloadResult {
+  status: 'unloaded'
 }
 
 let cachedAddon: NativeCudaAddon | null = null
@@ -194,6 +265,63 @@ export async function multiplyMatrixCuda(params: MultiplyMatrixCudaParams): Prom
     multiplyDurationMs: result.multiplyDurationMs,
     totalDurationMs: result.totalDurationMs,
     timingSource: result.timingSource,
+  }
+}
+
+export async function loadModelCuda(weights: Float32Array): Promise<CudaMlpLoadResult> {
+  const addon = getAddon()
+  const result = await addon.loadModel({ weights })
+  return {
+    status: result.status,
+    memoryEstimate: result.memoryEstimate,
+  }
+}
+
+export async function predictMlpCuda(input: Float32Array): Promise<CudaMlpPredictResult> {
+  const addon = getAddon()
+  const result = await addon.predict({ input })
+  return {
+    logits: result.logits,
+    gpuDurationMs: result.gpuDurationMs,
+    totalDurationMs: result.totalDurationMs,
+    timingSource: result.timingSource,
+  }
+}
+
+export async function unloadModelCuda(): Promise<CudaMlpUnloadResult> {
+  const addon = getAddon()
+  const result = await addon.unloadModel()
+  return {
+    status: result.status,
+  }
+}
+
+export async function loadCnnModelCuda(weights: Float32Array): Promise<CudaMlpLoadResult> {
+  const addon = getAddon()
+  const result = await addon.loadCnnModel({ weights })
+  return {
+    status: result.status,
+    memoryEstimate: result.memoryEstimate,
+  }
+}
+
+export async function predictCnnCuda(input: Float32Array): Promise<CudaCnnPredictResult> {
+  const addon = getAddon()
+  const result = await addon.predictCnn({ input })
+  return {
+    logits: result.logits,
+    gpuDurationMs: result.gpuDurationMs,
+    totalDurationMs: result.totalDurationMs,
+    timingSource: result.timingSource,
+    memoryEstimate: result.memoryEstimate,
+  }
+}
+
+export async function unloadCnnModelCuda(): Promise<CudaMlpUnloadResult> {
+  const addon = getAddon()
+  const result = await addon.unloadCnnModel()
+  return {
+    status: result.status,
   }
 }
 

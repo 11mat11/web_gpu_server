@@ -8,6 +8,10 @@ constexpr int kRandomFillBlockSize = 256;
 constexpr int kNaiveBlockSize = 16;
 constexpr int kTiledBlockSize = 16;
 constexpr int kTiledSize = 32;
+constexpr int kMlpGemvBlockSize = 256;
+constexpr int kMlpGemvTileSize = 256;
+constexpr int kCnnConvBlockSize = 16;
+constexpr int kCnnPoolBlockSize = 16;
 
 __device__ __forceinline__ uint32_t hash32(uint32_t x) {
   uint32_t v = x * 747796405u + 2891336453u;
@@ -115,6 +119,142 @@ __global__ void matrixMulTiledKernel(const float* __restrict__ matrixA, const fl
   if (row1 < size && col1 < size) matrixC[row1 * size + col1] = sum11;
 }
 
+__global__ void mlpGemvKernel(
+  const float* __restrict__ inputVector,
+  const float* __restrict__ weights,
+  const float* __restrict__ bias,
+  float* __restrict__ outputVector,
+  int inputSize,
+  int outputSize,
+  int applyRelu
+) {
+  __shared__ float inputTile[kMlpGemvTileSize];
+  __shared__ float partialSums[kMlpGemvBlockSize];
+
+  const int outputIndex = static_cast<int>(blockIdx.x);
+  const int localIndex = static_cast<int>(threadIdx.x);
+
+  if (outputIndex >= outputSize) {
+    return;
+  }
+
+  float localSum = 0.0f;
+
+  for (int base = 0; base < inputSize; base += kMlpGemvTileSize) {
+    const int inputIndex = base + localIndex;
+    inputTile[localIndex] = (inputIndex < inputSize) ? inputVector[inputIndex] : 0.0f;
+    __syncthreads();
+
+    const int tileLength = min(kMlpGemvTileSize, inputSize - base);
+    for (int k = localIndex; k < tileLength; k += kMlpGemvBlockSize) {
+      localSum += inputTile[k] * weights[(base + k) * outputSize + outputIndex];
+    }
+    __syncthreads();
+  }
+
+  partialSums[localIndex] = localSum;
+  __syncthreads();
+
+  for (int stride = kMlpGemvBlockSize / 2; stride > 0; stride >>= 1) {
+    if (localIndex < stride) {
+      partialSums[localIndex] += partialSums[localIndex + stride];
+    }
+    __syncthreads();
+  }
+
+  if (localIndex == 0) {
+    float value = partialSums[0] + bias[outputIndex];
+    if (applyRelu != 0 && value < 0.0f) {
+      value = 0.0f;
+    }
+    outputVector[outputIndex] = value;
+  }
+}
+
+__global__ void cnnConv2dKernel(
+  const float* __restrict__ input,
+  const float* __restrict__ weights,
+  const float* __restrict__ bias,
+  float* __restrict__ output,
+  int inChannels,
+  int outChannels,
+  int inHeight,
+  int inWidth,
+  int applyRelu
+) {
+  const int outX = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+  const int outY = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
+  const int outChannel = static_cast<int>(blockIdx.z);
+
+  if (outX >= inWidth || outY >= inHeight || outChannel >= outChannels) {
+    return;
+  }
+
+  float sum = bias[outChannel];
+
+  for (int inChannel = 0; inChannel < inChannels; ++inChannel) {
+    for (int ky = 0; ky < 3; ++ky) {
+      const int inY = outY + ky - 1;
+      if (inY < 0 || inY >= inHeight) {
+        continue;
+      }
+
+      for (int kx = 0; kx < 3; ++kx) {
+        const int inX = outX + kx - 1;
+        if (inX < 0 || inX >= inWidth) {
+          continue;
+        }
+
+        const int inputIndex = (inChannel * inHeight + inY) * inWidth + inX;
+        const int weightIndex = (((outChannel * inChannels) + inChannel) * 3 + ky) * 3 + kx;
+        sum += input[inputIndex] * weights[weightIndex];
+      }
+    }
+  }
+
+  if (applyRelu != 0 && sum < 0.0f) {
+    sum = 0.0f;
+  }
+
+  const int outputIndex = (outChannel * inHeight + outY) * inWidth + outX;
+  output[outputIndex] = sum;
+}
+
+__global__ void cnnMaxPool2x2Kernel(
+  const float* __restrict__ input,
+  float* __restrict__ output,
+  int channels,
+  int inHeight,
+  int inWidth
+) {
+  const int outWidth = inWidth / 2;
+  const int outHeight = inHeight / 2;
+
+  const int outX = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+  const int outY = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
+  const int channel = static_cast<int>(blockIdx.z);
+
+  if (outX >= outWidth || outY >= outHeight || channel >= channels) {
+    return;
+  }
+
+  const int inBaseX = outX * 2;
+  const int inBaseY = outY * 2;
+
+  float maxValue = -3.402823466e+38F;
+  for (int dy = 0; dy < 2; ++dy) {
+    for (int dx = 0; dx < 2; ++dx) {
+      const int inX = inBaseX + dx;
+      const int inY = inBaseY + dy;
+      const int inIndex = (channel * inHeight + inY) * inWidth + inX;
+      maxValue = fmaxf(maxValue, input[inIndex]);
+    }
+  }
+
+  const int outIndex = (channel * outHeight + outY) * outWidth + outX;
+  output[outIndex] = maxValue;
+}
+
 }
 
 void launchRandomFillKernel(
@@ -153,5 +293,80 @@ void launchMatrixMulTiledKernel(
   const dim3 block(kTiledBlockSize, kTiledBlockSize);
   const dim3 grid((size + kTiledSize - 1) / kTiledSize, (size + kTiledSize - 1) / kTiledSize);
   matrixMulTiledKernel<<<grid, block, 0, stream>>>(matrixA, matrixB, matrixC, size);
+}
+
+void launchMlpGemvKernel(
+  const float* inputVector,
+  const float* weights,
+  const float* bias,
+  float* outputVector,
+  int inputSize,
+  int outputSize,
+  bool applyRelu,
+  cudaStream_t stream
+) {
+  const dim3 block(kMlpGemvBlockSize);
+  const dim3 grid(static_cast<unsigned int>(outputSize));
+  mlpGemvKernel<<<grid, block, 0, stream>>>(
+    inputVector,
+    weights,
+    bias,
+    outputVector,
+    inputSize,
+    outputSize,
+    applyRelu ? 1 : 0
+  );
+}
+
+void launchCnnConv2dKernel(
+  const float* input,
+  const float* weights,
+  const float* bias,
+  float* output,
+  int inChannels,
+  int outChannels,
+  int inHeight,
+  int inWidth,
+  bool applyRelu,
+  cudaStream_t stream
+) {
+  const dim3 block(kCnnConvBlockSize, kCnnConvBlockSize);
+  const dim3 grid(
+    static_cast<unsigned int>((inWidth + kCnnConvBlockSize - 1) / kCnnConvBlockSize),
+    static_cast<unsigned int>((inHeight + kCnnConvBlockSize - 1) / kCnnConvBlockSize),
+    static_cast<unsigned int>(outChannels)
+  );
+
+  cnnConv2dKernel<<<grid, block, 0, stream>>>(
+    input,
+    weights,
+    bias,
+    output,
+    inChannels,
+    outChannels,
+    inHeight,
+    inWidth,
+    applyRelu ? 1 : 0
+  );
+}
+
+void launchCnnMaxPool2x2Kernel(
+  const float* input,
+  float* output,
+  int channels,
+  int inHeight,
+  int inWidth,
+  cudaStream_t stream
+) {
+  const int outHeight = inHeight / 2;
+  const int outWidth = inWidth / 2;
+  const dim3 block(kCnnPoolBlockSize, kCnnPoolBlockSize);
+  const dim3 grid(
+    static_cast<unsigned int>((outWidth + kCnnPoolBlockSize - 1) / kCnnPoolBlockSize),
+    static_cast<unsigned int>((outHeight + kCnnPoolBlockSize - 1) / kCnnPoolBlockSize),
+    static_cast<unsigned int>(channels)
+  );
+
+  cnnMaxPool2x2Kernel<<<grid, block, 0, stream>>>(input, output, channels, inHeight, inWidth);
 }
 

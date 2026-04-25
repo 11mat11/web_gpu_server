@@ -28,3 +28,36 @@ void launchMatrixMulTiledKernel(
   cudaStream_t stream
 );
 
+void launchMlpGemvKernel(
+  const float* inputVector,
+  const float* weights,
+  const float* bias,
+  float* outputVector,
+  int inputSize,
+  int outputSize,
+  bool applyRelu,
+  cudaStream_t stream
+);
+
+void launchCnnConv2dKernel(
+  const float* input,
+  const float* weights,
+  const float* bias,
+  float* output,
+  int inChannels,
+  int outChannels,
+  int inHeight,
+  int inWidth,
+  bool applyRelu,
+  cudaStream_t stream
+);
+
+void launchCnnMaxPool2x2Kernel(
+  const float* input,
+  float* output,
+  int channels,
+  int inHeight,
+  int inWidth,
+  cudaStream_t stream
+);
+
