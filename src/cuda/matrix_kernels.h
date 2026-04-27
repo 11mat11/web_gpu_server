@@ -61,3 +61,20 @@ void launchCnnMaxPool2x2Kernel(
   cudaStream_t stream
 );
 
+void launchVideoBilinearDownscaleKernel(
+  const unsigned char* inputRgba,
+  unsigned char* outputRgba,
+  int srcWidth,
+  int srcHeight,
+  int dstWidth,
+  int dstHeight,
+  cudaStream_t stream
+);
+
+void launchVideoRgbHistogramKernel(
+  const unsigned char* inputRgba,
+  unsigned int* histogram,
+  int pixelCount,
+  cudaStream_t stream
+);
+

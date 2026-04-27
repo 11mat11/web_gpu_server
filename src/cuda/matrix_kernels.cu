@@ -12,6 +12,8 @@ constexpr int kMlpGemvBlockSize = 256;
 constexpr int kMlpGemvTileSize = 256;
 constexpr int kCnnConvBlockSize = 16;
 constexpr int kCnnPoolBlockSize = 16;
+constexpr int kVideoBlockSize = 16;
+constexpr int kVideoHistogramBlockSize = 256;
 
 __device__ __forceinline__ uint32_t hash32(uint32_t x) {
   uint32_t v = x * 747796405u + 2891336453u;
@@ -255,6 +257,90 @@ __global__ void cnnMaxPool2x2Kernel(
   output[outIndex] = maxValue;
 }
 
+__global__ void videoBilinearDownscaleKernel(
+  const uchar4* __restrict__ input,
+  uchar4* __restrict__ output,
+  int srcWidth,
+  int srcHeight,
+  int dstWidth,
+  int dstHeight
+) {
+  const int outX = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+  const int outY = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
+
+  if (outX >= dstWidth || outY >= dstHeight) {
+    return;
+  }
+
+  const float scaleX = static_cast<float>(srcWidth) / static_cast<float>(dstWidth);
+  const float scaleY = static_cast<float>(srcHeight) / static_cast<float>(dstHeight);
+
+  const float srcX = (static_cast<float>(outX) + 0.5f) * scaleX - 0.5f;
+  const float srcY = (static_cast<float>(outY) + 0.5f) * scaleY - 0.5f;
+
+  int x0 = static_cast<int>(floorf(srcX));
+  int y0 = static_cast<int>(floorf(srcY));
+  x0 = max(0, min(x0, srcWidth - 1));
+  y0 = max(0, min(y0, srcHeight - 1));
+  const int x1 = min(x0 + 1, srcWidth - 1);
+  const int y1 = min(y0 + 1, srcHeight - 1);
+
+  const float fx = srcX - static_cast<float>(x0);
+  const float fy = srcY - static_cast<float>(y0);
+
+  const uchar4 p00 = input[y0 * srcWidth + x0];
+  const uchar4 p10 = input[y0 * srcWidth + x1];
+  const uchar4 p01 = input[y1 * srcWidth + x0];
+  const uchar4 p11 = input[y1 * srcWidth + x1];
+
+  const float invFx = 1.0f - fx;
+  const float invFy = 1.0f - fy;
+
+  const float4 top = make_float4(
+    static_cast<float>(p00.x) * invFx + static_cast<float>(p10.x) * fx,
+    static_cast<float>(p00.y) * invFx + static_cast<float>(p10.y) * fx,
+    static_cast<float>(p00.z) * invFx + static_cast<float>(p10.z) * fx,
+    static_cast<float>(p00.w) * invFx + static_cast<float>(p10.w) * fx
+  );
+
+  const float4 bottom = make_float4(
+    static_cast<float>(p01.x) * invFx + static_cast<float>(p11.x) * fx,
+    static_cast<float>(p01.y) * invFx + static_cast<float>(p11.y) * fx,
+    static_cast<float>(p01.z) * invFx + static_cast<float>(p11.z) * fx,
+    static_cast<float>(p01.w) * invFx + static_cast<float>(p11.w) * fx
+  );
+
+  const float4 out = make_float4(
+    top.x * invFy + bottom.x * fy,
+    top.y * invFy + bottom.y * fy,
+    top.z * invFy + bottom.z * fy,
+    top.w * invFy + bottom.w * fy
+  );
+
+  output[outY * dstWidth + outX] = make_uchar4(
+    static_cast<unsigned char>(fminf(fmaxf(out.x, 0.0f), 255.0f)),
+    static_cast<unsigned char>(fminf(fmaxf(out.y, 0.0f), 255.0f)),
+    static_cast<unsigned char>(fminf(fmaxf(out.z, 0.0f), 255.0f)),
+    static_cast<unsigned char>(fminf(fmaxf(out.w, 0.0f), 255.0f))
+  );
+}
+
+__global__ void videoRgbHistogramKernel(
+  const uchar4* __restrict__ input,
+  unsigned int* __restrict__ histogram,
+  int pixelCount
+) {
+  const int idx = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+  if (idx >= pixelCount) {
+    return;
+  }
+
+  const uchar4 pixel = input[idx];
+  atomicAdd(&histogram[static_cast<unsigned int>(pixel.x)], 1U);
+  atomicAdd(&histogram[256U + static_cast<unsigned int>(pixel.y)], 1U);
+  atomicAdd(&histogram[512U + static_cast<unsigned int>(pixel.z)], 1U);
+}
+
 }
 
 void launchRandomFillKernel(
@@ -368,5 +454,44 @@ void launchCnnMaxPool2x2Kernel(
   );
 
   cnnMaxPool2x2Kernel<<<grid, block, 0, stream>>>(input, output, channels, inHeight, inWidth);
+}
+
+void launchVideoBilinearDownscaleKernel(
+  const unsigned char* inputRgba,
+  unsigned char* outputRgba,
+  int srcWidth,
+  int srcHeight,
+  int dstWidth,
+  int dstHeight,
+  cudaStream_t stream
+) {
+  const dim3 block(kVideoBlockSize, kVideoBlockSize);
+  const dim3 grid(
+    static_cast<unsigned int>((dstWidth + kVideoBlockSize - 1) / kVideoBlockSize),
+    static_cast<unsigned int>((dstHeight + kVideoBlockSize - 1) / kVideoBlockSize)
+  );
+
+  videoBilinearDownscaleKernel<<<grid, block, 0, stream>>>(
+    reinterpret_cast<const uchar4*>(inputRgba),
+    reinterpret_cast<uchar4*>(outputRgba),
+    srcWidth,
+    srcHeight,
+    dstWidth,
+    dstHeight
+  );
+}
+
+void launchVideoRgbHistogramKernel(
+  const unsigned char* inputRgba,
+  unsigned int* histogram,
+  int pixelCount,
+  cudaStream_t stream
+) {
+  const int blocks = (pixelCount + kVideoHistogramBlockSize - 1) / kVideoHistogramBlockSize;
+  videoRgbHistogramKernel<<<blocks, kVideoHistogramBlockSize, 0, stream>>>(
+    reinterpret_cast<const uchar4*>(inputRgba),
+    histogram,
+    pixelCount
+  );
 }
 

@@ -29,6 +29,19 @@ constexpr int kCnnConv4OutChannels = 128;
 constexpr int kCnnDense1Out = 256;
 constexpr int kCnnOutputSize = 10;
 
+constexpr int kVideoSrcWidth = 1920;
+constexpr int kVideoSrcHeight = 1080;
+constexpr int kVideoDstWidth720 = 1280;
+constexpr int kVideoDstHeight720 = 720;
+constexpr int kVideoDstWidth480 = 854;
+constexpr int kVideoDstHeight480 = 480;
+constexpr int kVideoDstWidth160 = 284;
+constexpr int kVideoDstHeight160 = 160;
+constexpr int kVideoChannels = 4;
+constexpr int kVideoHistogramBinsPerChannel = 256;
+constexpr int kVideoHistogramChannels = 3;
+constexpr int kVideoHistogramBinCount = kVideoHistogramBinsPerChannel * kVideoHistogramChannels;
+
 constexpr int kCnnPool1Height = 64;
 constexpr int kCnnPool1Width = 64;
 constexpr int kCnnPool2Height = 32;
@@ -81,6 +94,24 @@ std::string GetStringProperty(const Napi::Object& obj, const char* key, const st
   return fallback;
 }
 
+struct VideoTargetSize {
+  int width;
+  int height;
+};
+
+VideoTargetSize ResolveVideoTargetSize(const std::string& quality) {
+  if (quality == "720p") {
+    return {kVideoDstWidth720, kVideoDstHeight720};
+  }
+  if (quality == "480p") {
+    return {kVideoDstWidth480, kVideoDstHeight480};
+  }
+  if (quality == "160p") {
+    return {kVideoDstWidth160, kVideoDstHeight160};
+  }
+  throw std::runtime_error("Unsupported video quality. Expected one of: 720p, 480p, 160p.");
+}
+
 bool GetBoolProperty(const Napi::Object& obj, const char* key, bool fallback) {
   const Napi::Value value = obj.Get(key);
   if (value.IsBoolean()) {
@@ -123,6 +154,27 @@ std::vector<float> ParseFloat32Array(const Napi::Object& inputObj, const char* k
 
   std::vector<float> out(expectedLength);
   std::memcpy(out.data(), array.Data(), expectedLength * sizeof(float));
+  return out;
+}
+
+std::vector<uint8_t> ParseUint8Array(const Napi::Object& inputObj, const char* key, size_t expectedLength) {
+  const Napi::Value value = inputObj.Get(key);
+  if (!value.IsTypedArray()) {
+    throw std::runtime_error(std::string(key) + " must be a Uint8Array.");
+  }
+
+  const Napi::TypedArray typedArray = value.As<Napi::TypedArray>();
+  if (typedArray.TypedArrayType() != napi_uint8_array) {
+    throw std::runtime_error(std::string(key) + " must be a Uint8Array.");
+  }
+
+  const Napi::Uint8Array array = value.As<Napi::Uint8Array>();
+  if (array.ElementLength() != expectedLength) {
+    throw std::runtime_error(std::string(key) + " has invalid length.");
+  }
+
+  std::vector<uint8_t> out(expectedLength);
+  std::memcpy(out.data(), array.Data(), expectedLength * sizeof(uint8_t));
   return out;
 }
 
@@ -230,6 +282,20 @@ struct CudaCnnModelState {
 };
 
 CudaCnnModelState gCnnModel;
+
+struct CudaVideoState {
+  std::mutex mutex;
+  bool loaded = false;
+  int srcWidth = kVideoSrcWidth;
+  int srcHeight = kVideoSrcHeight;
+  int maxDstWidth = kVideoDstWidth720;
+  int maxDstHeight = kVideoDstHeight720;
+  unsigned char* dInput = nullptr;
+  unsigned char* dOutput = nullptr;
+  size_t gpuAllocatedBytes = 0;
+};
+
+CudaVideoState gVideoState;
 
 void FreeMlpModelLocked() {
   if (gMlpModel.dW1) {
@@ -374,6 +440,19 @@ void FreeCnnModelLocked() {
 
   gCnnModel.loaded = false;
   gCnnModel.gpuAllocatedBytes = 0;
+}
+
+void FreeVideoStateLocked() {
+  if (gVideoState.dInput) {
+    cudaFree(gVideoState.dInput);
+    gVideoState.dInput = nullptr;
+  }
+  if (gVideoState.dOutput) {
+    cudaFree(gVideoState.dOutput);
+    gVideoState.dOutput = nullptr;
+  }
+  gVideoState.loaded = false;
+  gVideoState.gpuAllocatedBytes = 0;
 }
 
 } // namespace
@@ -1130,6 +1209,325 @@ private:
   Napi::Promise::Deferred deferred_;
 };
 
+class CudaVideoInitWorker final : public Napi::AsyncWorker {
+public:
+  CudaVideoInitWorker(Napi::Env env, int srcWidth, int srcHeight, int dstWidth, int dstHeight)
+    : Napi::AsyncWorker(env),
+      deferred_(Napi::Promise::Deferred::New(env)),
+      srcWidth_(srcWidth),
+      srcHeight_(srcHeight),
+      dstWidth_(dstWidth),
+      dstHeight_(dstHeight) {}
+
+  Napi::Promise GetPromise() const {
+    return deferred_.Promise();
+  }
+
+  void Execute() override {
+    std::lock_guard<std::mutex> lock(gVideoState.mutex);
+
+    try {
+      if (srcWidth_ <= 0 || srcHeight_ <= 0 || dstWidth_ <= 0 || dstHeight_ <= 0) {
+        throw std::runtime_error("Invalid video pipeline dimensions.");
+      }
+
+      FreeVideoStateLocked();
+      gVideoState.srcWidth = srcWidth_;
+      gVideoState.srcHeight = srcHeight_;
+      gVideoState.maxDstWidth = dstWidth_;
+      gVideoState.maxDstHeight = dstHeight_;
+
+      const size_t srcBytes = static_cast<size_t>(srcWidth_) * static_cast<size_t>(srcHeight_) * kVideoChannels;
+      const size_t dstBytes = static_cast<size_t>(dstWidth_) * static_cast<size_t>(dstHeight_) * kVideoChannels;
+
+      CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gVideoState.dInput), srcBytes));
+      CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gVideoState.dOutput), dstBytes));
+
+      gVideoState.loaded = true;
+      gVideoState.gpuAllocatedBytes = srcBytes + dstBytes;
+      gpuMemoryBytes_ = gVideoState.gpuAllocatedBytes;
+    } catch (const std::exception& ex) {
+      FreeVideoStateLocked();
+      SetError(ex.what());
+    }
+  }
+
+  void OnOK() override {
+    Napi::HandleScope scope(Env());
+    Napi::Object result = Napi::Object::New(Env());
+    result.Set("status", Napi::String::New(Env(), "ready"));
+    result.Set("gpuMemoryBytes", Napi::Number::New(Env(), static_cast<double>(gpuMemoryBytes_)));
+    deferred_.Resolve(result);
+  }
+
+  void OnError(const Napi::Error& error) override {
+    Napi::HandleScope scope(Env());
+    deferred_.Reject(error.Value());
+  }
+
+private:
+  Napi::Promise::Deferred deferred_;
+  int srcWidth_;
+  int srcHeight_;
+  int dstWidth_;
+  int dstHeight_;
+  size_t gpuMemoryBytes_ = 0;
+};
+
+class CudaVideoProcessWorker final : public Napi::AsyncWorker {
+public:
+  CudaVideoProcessWorker(Napi::Env env, std::vector<uint8_t> input, std::string quality)
+    : Napi::AsyncWorker(env),
+      deferred_(Napi::Promise::Deferred::New(env)),
+      input_(std::move(input)),
+      quality_(std::move(quality)) {}
+
+  Napi::Promise GetPromise() const {
+    return deferred_.Promise();
+  }
+
+  void Execute() override {
+    const auto totalStart = std::chrono::steady_clock::now();
+    std::lock_guard<std::mutex> lock(gVideoState.mutex);
+
+    if (!gVideoState.loaded) {
+      SetError("CUDA video pipeline is not initialized.");
+      return;
+    }
+
+    const size_t expectedInput = static_cast<size_t>(gVideoState.srcWidth) * static_cast<size_t>(gVideoState.srcHeight) * kVideoChannels;
+    if (input_.size() != expectedInput) {
+      SetError("Video input frame has invalid size.");
+      return;
+    }
+
+    VideoTargetSize target;
+    try {
+      target = ResolveVideoTargetSize(quality_);
+    } catch (const std::exception& ex) {
+      SetError(ex.what());
+      return;
+    }
+
+    if (target.width > gVideoState.maxDstWidth || target.height > gVideoState.maxDstHeight) {
+      SetError("Requested quality exceeds initialized CUDA output buffer size.");
+      return;
+    }
+
+    const size_t outputBytes = static_cast<size_t>(target.width) * static_cast<size_t>(target.height) * kVideoChannels;
+    output_.resize(outputBytes);
+
+    cudaEvent_t startEvent = nullptr;
+    cudaEvent_t stopEvent = nullptr;
+
+    try {
+      CUDA_CHECK_THROW(cudaEventCreate(&startEvent));
+      CUDA_CHECK_THROW(cudaEventCreate(&stopEvent));
+
+      CUDA_CHECK_THROW(cudaMemcpy(gVideoState.dInput, input_.data(), expectedInput, cudaMemcpyHostToDevice));
+
+      CUDA_CHECK_THROW(cudaEventRecord(startEvent, nullptr));
+      launchVideoBilinearDownscaleKernel(
+        gVideoState.dInput,
+        gVideoState.dOutput,
+        gVideoState.srcWidth,
+        gVideoState.srcHeight,
+        target.width,
+        target.height,
+        nullptr);
+      CUDA_CHECK_THROW(cudaGetLastError());
+      CUDA_CHECK_THROW(cudaEventRecord(stopEvent, nullptr));
+      CUDA_CHECK_THROW(cudaEventSynchronize(stopEvent));
+
+      float kernelMs = 0.0F;
+      CUDA_CHECK_THROW(cudaEventElapsedTime(&kernelMs, startEvent, stopEvent));
+      gpuDurationMs_ = static_cast<double>(kernelMs);
+
+      CUDA_CHECK_THROW(cudaMemcpy(output_.data(), gVideoState.dOutput, outputBytes, cudaMemcpyDeviceToHost));
+
+      const auto totalStop = std::chrono::steady_clock::now();
+      totalDurationMs_ = std::chrono::duration<double, std::milli>(totalStop - totalStart).count();
+      gpuMemoryBytes_ = gVideoState.gpuAllocatedBytes;
+
+      if (startEvent) {
+        cudaEventDestroy(startEvent);
+      }
+      if (stopEvent) {
+        cudaEventDestroy(stopEvent);
+      }
+    } catch (const std::exception& ex) {
+      if (startEvent) {
+        cudaEventDestroy(startEvent);
+      }
+      if (stopEvent) {
+        cudaEventDestroy(stopEvent);
+      }
+      SetError(ex.what());
+    }
+  }
+
+  void OnOK() override {
+    Napi::HandleScope scope(Env());
+    Napi::Object result = Napi::Object::New(Env());
+
+    Napi::ArrayBuffer outBuffer = Napi::ArrayBuffer::New(Env(), output_.size());
+    std::memcpy(outBuffer.Data(), output_.data(), output_.size());
+    result.Set("output", Napi::Uint8Array::New(Env(), output_.size(), outBuffer, 0));
+    result.Set("gpuDurationMs", Napi::Number::New(Env(), gpuDurationMs_));
+    result.Set("totalDurationMs", Napi::Number::New(Env(), totalDurationMs_));
+    result.Set("timingSource", Napi::String::New(Env(), "gpu-timestamp"));
+    result.Set("gpuMemoryBytes", Napi::Number::New(Env(), static_cast<double>(gpuMemoryBytes_)));
+
+    deferred_.Resolve(result);
+  }
+
+  void OnError(const Napi::Error& error) override {
+    Napi::HandleScope scope(Env());
+    deferred_.Reject(error.Value());
+  }
+
+private:
+  Napi::Promise::Deferred deferred_;
+  std::vector<uint8_t> input_;
+  std::string quality_;
+  std::vector<uint8_t> output_;
+  double gpuDurationMs_ = 0.0;
+  double totalDurationMs_ = 0.0;
+  size_t gpuMemoryBytes_ = 0;
+};
+
+class CudaVideoHistogramWorker final : public Napi::AsyncWorker {
+public:
+  CudaVideoHistogramWorker(Napi::Env env, std::vector<uint8_t> input)
+    : Napi::AsyncWorker(env),
+      deferred_(Napi::Promise::Deferred::New(env)),
+      input_(std::move(input)) {}
+
+  Napi::Promise GetPromise() const {
+    return deferred_.Promise();
+  }
+
+  void Execute() override {
+    const auto totalStart = std::chrono::steady_clock::now();
+
+    const size_t expectedInput = static_cast<size_t>(kVideoSrcWidth) * static_cast<size_t>(kVideoSrcHeight) * kVideoChannels;
+    if (input_.size() != expectedInput) {
+      SetError("Video histogram input frame has invalid size.");
+      return;
+    }
+
+    unsigned char* dInput = nullptr;
+    unsigned int* dHistogram = nullptr;
+    cudaEvent_t startEvent = nullptr;
+    cudaEvent_t stopEvent = nullptr;
+
+    try {
+      CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&dInput), expectedInput));
+      CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&dHistogram), static_cast<size_t>(kVideoHistogramBinCount) * sizeof(unsigned int)));
+
+      CUDA_CHECK_THROW(cudaMemcpy(dInput, input_.data(), expectedInput, cudaMemcpyHostToDevice));
+      CUDA_CHECK_THROW(cudaMemset(dHistogram, 0, static_cast<size_t>(kVideoHistogramBinCount) * sizeof(unsigned int)));
+
+      CUDA_CHECK_THROW(cudaEventCreate(&startEvent));
+      CUDA_CHECK_THROW(cudaEventCreate(&stopEvent));
+
+      CUDA_CHECK_THROW(cudaEventRecord(startEvent, nullptr));
+      launchVideoRgbHistogramKernel(
+        dInput,
+        dHistogram,
+        kVideoSrcWidth * kVideoSrcHeight,
+        nullptr);
+      CUDA_CHECK_THROW(cudaGetLastError());
+      CUDA_CHECK_THROW(cudaEventRecord(stopEvent, nullptr));
+      CUDA_CHECK_THROW(cudaEventSynchronize(stopEvent));
+
+      float kernelMs = 0.0F;
+      CUDA_CHECK_THROW(cudaEventElapsedTime(&kernelMs, startEvent, stopEvent));
+      gpuDurationMs_ = static_cast<double>(kernelMs);
+
+      histogram_.resize(kVideoHistogramBinCount);
+      CUDA_CHECK_THROW(cudaMemcpy(
+        histogram_.data(),
+        dHistogram,
+        static_cast<size_t>(kVideoHistogramBinCount) * sizeof(unsigned int),
+        cudaMemcpyDeviceToHost));
+
+      const auto totalStop = std::chrono::steady_clock::now();
+      totalDurationMs_ = std::chrono::duration<double, std::milli>(totalStop - totalStart).count();
+
+      if (startEvent) cudaEventDestroy(startEvent);
+      if (stopEvent) cudaEventDestroy(stopEvent);
+      if (dInput) cudaFree(dInput);
+      if (dHistogram) cudaFree(dHistogram);
+    } catch (const std::exception& ex) {
+      if (startEvent) cudaEventDestroy(startEvent);
+      if (stopEvent) cudaEventDestroy(stopEvent);
+      if (dInput) cudaFree(dInput);
+      if (dHistogram) cudaFree(dHistogram);
+      SetError(ex.what());
+    }
+  }
+
+  void OnOK() override {
+    Napi::HandleScope scope(Env());
+    Napi::Object result = Napi::Object::New(Env());
+
+    Napi::Array histogramArray = Napi::Array::New(Env(), histogram_.size());
+    for (size_t i = 0; i < histogram_.size(); ++i) {
+      histogramArray.Set(static_cast<uint32_t>(i), Napi::Number::New(Env(), static_cast<double>(histogram_[i])));
+    }
+
+    result.Set("histogram", histogramArray);
+    result.Set("gpuDurationMs", Napi::Number::New(Env(), gpuDurationMs_));
+    result.Set("totalDurationMs", Napi::Number::New(Env(), totalDurationMs_));
+    result.Set("timingSource", Napi::String::New(Env(), "gpu-timestamp"));
+    deferred_.Resolve(result);
+  }
+
+  void OnError(const Napi::Error& error) override {
+    Napi::HandleScope scope(Env());
+    deferred_.Reject(error.Value());
+  }
+
+private:
+  Napi::Promise::Deferred deferred_;
+  std::vector<uint8_t> input_;
+  std::vector<unsigned int> histogram_;
+  double gpuDurationMs_ = 0.0;
+  double totalDurationMs_ = 0.0;
+};
+
+class CudaVideoUnloadWorker final : public Napi::AsyncWorker {
+public:
+  explicit CudaVideoUnloadWorker(Napi::Env env)
+    : Napi::AsyncWorker(env),
+      deferred_(Napi::Promise::Deferred::New(env)) {}
+
+  Napi::Promise GetPromise() const {
+    return deferred_.Promise();
+  }
+
+  void Execute() override {
+    std::lock_guard<std::mutex> lock(gVideoState.mutex);
+    FreeVideoStateLocked();
+  }
+
+  void OnOK() override {
+    Napi::HandleScope scope(Env());
+    Napi::Object result = Napi::Object::New(Env());
+    result.Set("status", Napi::String::New(Env(), "unloaded"));
+    deferred_.Resolve(result);
+  }
+
+  void OnError(const Napi::Error& error) override {
+    Napi::HandleScope scope(Env());
+    deferred_.Reject(error.Value());
+  }
+
+private:
+  Napi::Promise::Deferred deferred_;
+};
+
 Napi::Value MultiplyMatrixCuda(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
 
@@ -1248,6 +1646,84 @@ Napi::Value UnloadCnnModel(const Napi::CallbackInfo& info) {
   return promise;
 }
 
+Napi::Value InitVideoPipeline(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+
+  try {
+    if (info.Length() < 1 || !info[0].IsObject()) {
+      throw std::runtime_error("initVideoPipeline expects an options object.");
+    }
+
+    const Napi::Object options = info[0].As<Napi::Object>();
+    const int srcWidth = options.Get("srcWidth").As<Napi::Number>().Int32Value();
+    const int srcHeight = options.Get("srcHeight").As<Napi::Number>().Int32Value();
+    const int dstWidth = options.Get("dstWidth").As<Napi::Number>().Int32Value();
+    const int dstHeight = options.Get("dstHeight").As<Napi::Number>().Int32Value();
+
+    auto* worker = new CudaVideoInitWorker(env, srcWidth, srcHeight, dstWidth, dstHeight);
+    Napi::Promise promise = worker->GetPromise();
+    worker->Queue();
+    return promise;
+  } catch (const std::exception& ex) {
+    Napi::Error::New(env, ex.what()).ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+}
+
+Napi::Value ProcessVideoFrame(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+
+  try {
+    if (info.Length() < 1 || !info[0].IsObject()) {
+      throw std::runtime_error("processVideoFrame expects an options object with input Uint8Array.");
+    }
+
+    const Napi::Object options = info[0].As<Napi::Object>();
+    const size_t expectedBytes = static_cast<size_t>(gVideoState.srcWidth) * static_cast<size_t>(gVideoState.srcHeight) * kVideoChannels;
+    std::vector<uint8_t> input = ParseUint8Array(options, "input", expectedBytes);
+    const std::string quality = GetStringProperty(options, "quality", "480p");
+
+    auto* worker = new CudaVideoProcessWorker(env, std::move(input), quality);
+    Napi::Promise promise = worker->GetPromise();
+    worker->Queue();
+    return promise;
+  } catch (const std::exception& ex) {
+    Napi::Error::New(env, ex.what()).ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+}
+
+Napi::Value VideoHistogram(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+
+  try {
+    if (info.Length() < 1 || !info[0].IsObject()) {
+      throw std::runtime_error("videoHistogram expects an options object with input Uint8Array.");
+    }
+
+    const Napi::Object options = info[0].As<Napi::Object>();
+    const size_t expectedBytes = static_cast<size_t>(kVideoSrcWidth) * static_cast<size_t>(kVideoSrcHeight) * kVideoChannels;
+    std::vector<uint8_t> input = ParseUint8Array(options, "input", expectedBytes);
+
+    auto* worker = new CudaVideoHistogramWorker(env, std::move(input));
+    Napi::Promise promise = worker->GetPromise();
+    worker->Queue();
+    return promise;
+  } catch (const std::exception& ex) {
+    Napi::Error::New(env, ex.what()).ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+}
+
+Napi::Value UnloadVideoPipeline(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+
+  auto* worker = new CudaVideoUnloadWorker(env);
+  Napi::Promise promise = worker->GetPromise();
+  worker->Queue();
+  return promise;
+}
+
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("multiplyMatrixCuda", Napi::Function::New(env, MultiplyMatrixCuda));
   exports.Set("loadModel", Napi::Function::New(env, LoadModel));
@@ -1256,6 +1732,10 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("loadCnnModel", Napi::Function::New(env, LoadCnnModel));
   exports.Set("predictCnn", Napi::Function::New(env, PredictCnn));
   exports.Set("unloadCnnModel", Napi::Function::New(env, UnloadCnnModel));
+  exports.Set("initVideoPipeline", Napi::Function::New(env, InitVideoPipeline));
+  exports.Set("processVideoFrame", Napi::Function::New(env, ProcessVideoFrame));
+  exports.Set("videoHistogram", Napi::Function::New(env, VideoHistogram));
+  exports.Set("unloadVideoPipeline", Napi::Function::New(env, UnloadVideoPipeline));
   return exports;
 }
 

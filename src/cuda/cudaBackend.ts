@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import type { VideoQuality } from '../gpu/video-runner.js'
 
 type CudaInputMode = 'random' | 'custom'
 
@@ -48,6 +49,26 @@ type NativeMlpUnloadResult = {
   status: 'unloaded'
 }
 
+type NativeVideoInitResult = {
+  status: 'ready'
+  gpuMemoryBytes: number
+}
+
+type NativeVideoFrameResult = {
+  output: Uint8Array
+  gpuDurationMs: number
+  totalDurationMs: number
+  timingSource: 'gpu-timestamp'
+  gpuMemoryBytes: number
+}
+
+type NativeVideoHistogramResult = {
+  histogram: number[]
+  gpuDurationMs: number
+  totalDurationMs: number
+  timingSource: 'gpu-timestamp'
+}
+
 type NativeCudaAddon = {
   multiplyMatrixCuda: (params: Record<string, unknown>) => Promise<NativeCudaResult>
   loadModel: (params: Record<string, unknown>) => Promise<NativeMlpLoadResult>
@@ -56,6 +77,10 @@ type NativeCudaAddon = {
   loadCnnModel: (params: Record<string, unknown>) => Promise<NativeMlpLoadResult>
   predictCnn: (params: Record<string, unknown>) => Promise<NativeCnnPredictResult>
   unloadCnnModel: () => Promise<NativeMlpUnloadResult>
+  initVideoPipeline: (params: Record<string, unknown>) => Promise<NativeVideoInitResult>
+  processVideoFrame: (params: Record<string, unknown>) => Promise<NativeVideoFrameResult>
+  videoHistogram: (params: Record<string, unknown>) => Promise<NativeVideoHistogramResult>
+  unloadVideoPipeline: () => Promise<NativeMlpUnloadResult>
 }
 
 export interface MultiplyMatrixCudaParams {
@@ -112,6 +137,33 @@ export interface CudaCnnPredictResult {
 
 export interface CudaMlpUnloadResult {
   status: 'unloaded'
+}
+
+export interface CudaVideoInitParams {
+  srcWidth: number
+  srcHeight: number
+  dstWidth: number
+  dstHeight: number
+}
+
+export interface CudaVideoInitResult {
+  status: 'ready'
+  gpuMemoryBytes: number
+}
+
+export interface CudaVideoFrameResult {
+  rgba: Buffer
+  gpuDurationMs: number
+  totalDurationMs: number
+  timingSource: 'gpu-timestamp'
+  gpuMemoryBytes: number
+}
+
+export interface CudaVideoHistogramResult {
+  histogram: number[]
+  gpuTimeMs: number
+  totalDurationMs: number
+  timingSource: 'gpu-timestamp'
 }
 
 let cachedAddon: NativeCudaAddon | null = null
@@ -322,6 +374,46 @@ export async function unloadCnnModelCuda(): Promise<CudaMlpUnloadResult> {
   const result = await addon.unloadCnnModel()
   return {
     status: result.status,
+  }
+}
+
+export async function initVideoPipelineCuda(params: CudaVideoInitParams): Promise<CudaVideoInitResult> {
+  const addon = getAddon()
+  const result = await addon.initVideoPipeline({ ...params })
+  return {
+    status: result.status,
+    gpuMemoryBytes: result.gpuMemoryBytes,
+  }
+}
+
+export async function processVideoFrameCuda(input: Uint8Array, quality: VideoQuality): Promise<CudaVideoFrameResult> {
+  const addon = getAddon()
+  const result = await addon.processVideoFrame({ input, quality })
+  return {
+    rgba: Buffer.from(result.output),
+    gpuDurationMs: result.gpuDurationMs,
+    totalDurationMs: result.totalDurationMs,
+    timingSource: result.timingSource,
+    gpuMemoryBytes: result.gpuMemoryBytes,
+  }
+}
+
+export async function unloadVideoPipelineCuda(): Promise<CudaMlpUnloadResult> {
+  const addon = getAddon()
+  const result = await addon.unloadVideoPipeline()
+  return {
+    status: result.status,
+  }
+}
+
+export async function computeHistogramCuda(input: Uint8Array): Promise<CudaVideoHistogramResult> {
+  const addon = getAddon()
+  const result = await addon.videoHistogram({ input })
+  return {
+    histogram: result.histogram,
+    gpuTimeMs: result.gpuDurationMs,
+    totalDurationMs: result.totalDurationMs,
+    timingSource: result.timingSource,
   }
 }
 

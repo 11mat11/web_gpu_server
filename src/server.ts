@@ -2,6 +2,7 @@ import Fastify from 'fastify'
 import cors from '@fastify/cors'
 import swagger from '@fastify/swagger'
 import swaggerUi from '@fastify/swagger-ui'
+import websocket from '@fastify/websocket'
 
 import { healthRoute } from './routes/health.js'
 import { gpuInfoRoute } from './routes/gpu-info.js'
@@ -10,6 +11,7 @@ import { imageRoute } from './routes/image.js'
 import { matrixRoute } from './routes/matrix.js'
 import { benchmarkRoute } from './routes/benchmark.js'
 import { ai } from './routes/ai'
+import { videoRoute } from './routes/video.js'
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 60 * 60 * 1000
 
@@ -61,9 +63,12 @@ export async function buildServer() {
         { name: 'matrix', description: 'Matrix operations' },
         { name: 'benchmark', description: 'Benchmark runner & results' },
         { name: 'ai', description: 'Stateful MLP inference pipeline' },
+        { name: 'video', description: 'Video streaming + dynamic downscaling benchmarks' },
       ],
     },
   })
+
+  await server.register(websocket)
 
   await server.register(swaggerUi, {
     routePrefix: '/docs',
@@ -78,6 +83,7 @@ export async function buildServer() {
   await server.register(matrixRoute,     { prefix: '/matrix' })
   await server.register(benchmarkRoute,  { prefix: '/benchmark' })
   await server.register(ai,         { prefix: '/ai' })
+  await server.register(videoRoute, { prefix: '/video' })
 
   return server
 }
