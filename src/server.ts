@@ -12,6 +12,7 @@ import { matrixRoute } from './routes/matrix.js'
 import { benchmarkRoute } from './routes/benchmark.js'
 import { ai } from './routes/ai'
 import { videoRoute } from './routes/video.js'
+import { renderRoute } from './routes/render.js'
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 60 * 60 * 1000
 
@@ -64,6 +65,7 @@ export async function buildServer() {
         { name: 'benchmark', description: 'Benchmark runner & results' },
         { name: 'ai', description: 'Stateful MLP inference pipeline' },
         { name: 'video', description: 'Video streaming + dynamic downscaling benchmarks' },
+        { name: 'render', description: 'Procedural SDF scene rendering benchmarks' },
       ],
     },
   })
@@ -84,6 +86,7 @@ export async function buildServer() {
   await server.register(benchmarkRoute,  { prefix: '/benchmark' })
   await server.register(ai,         { prefix: '/ai' })
   await server.register(videoRoute, { prefix: '/video' })
+  await server.register(renderRoute, { prefix: '/render' })
 
   return server
 }

@@ -41,6 +41,8 @@ constexpr int kVideoChannels = 4;
 constexpr int kVideoHistogramBinsPerChannel = 256;
 constexpr int kVideoHistogramChannels = 3;
 constexpr int kVideoHistogramBinCount = kVideoHistogramBinsPerChannel * kVideoHistogramChannels;
+constexpr int kRenderShapeStride = 12;
+constexpr int kRenderChannels = 4;
 
 constexpr int kCnnPool1Height = 64;
 constexpr int kCnnPool1Width = 64;
@@ -1177,7 +1179,6 @@ private:
   double gpuDurationMs_ = 0.0;
   double totalDurationMs_ = 0.0;
 };
-
 class CudaCnnUnloadWorker final : public Napi::AsyncWorker {
 public:
   explicit CudaCnnUnloadWorker(Napi::Env env)
@@ -1208,7 +1209,6 @@ public:
 private:
   Napi::Promise::Deferred deferred_;
 };
-
 class CudaVideoInitWorker final : public Napi::AsyncWorker {
 public:
   CudaVideoInitWorker(Napi::Env env, int srcWidth, int srcHeight, int dstWidth, int dstHeight)
@@ -1528,6 +1528,118 @@ private:
   Napi::Promise::Deferred deferred_;
 };
 
+class CudaRenderSceneWorker final : public Napi::AsyncWorker {
+public:
+  CudaRenderSceneWorker(Napi::Env env, std::vector<float> shapes, int shapeCount, int width, int height)
+    : Napi::AsyncWorker(env),
+      deferred_(Napi::Promise::Deferred::New(env)),
+      shapes_(std::move(shapes)),
+      shapeCount_(shapeCount),
+      width_(width),
+      height_(height) {}
+
+  Napi::Promise GetPromise() const {
+    return deferred_.Promise();
+  }
+
+  void Execute() override {
+    const auto totalStart = std::chrono::steady_clock::now();
+
+    if (shapeCount_ <= 0) {
+      SetError("shapeCount must be positive.");
+      return;
+    }
+    if (width_ <= 0 || height_ <= 0) {
+      SetError("width and height must be positive.");
+      return;
+    }
+
+    const size_t expectedLength = static_cast<size_t>(shapeCount_) * static_cast<size_t>(kRenderShapeStride);
+    if (shapes_.size() != expectedLength) {
+      SetError("Shape buffer length mismatch.");
+      return;
+    }
+
+    const size_t shapeBytes = shapes_.size() * sizeof(float);
+    const size_t outputBytes = static_cast<size_t>(width_) * static_cast<size_t>(height_) * kRenderChannels;
+    output_.resize(outputBytes);
+
+    cudaEvent_t startEvent = nullptr;
+    cudaEvent_t stopEvent = nullptr;
+
+    float* dShapes = nullptr;
+    unsigned char* dOutput = nullptr;
+
+    try {
+      CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&dShapes), shapeBytes));
+      CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&dOutput), outputBytes));
+
+      CUDA_CHECK_THROW(cudaMemcpy(dShapes, shapes_.data(), shapeBytes, cudaMemcpyHostToDevice));
+
+      CUDA_CHECK_THROW(cudaEventCreate(&startEvent));
+      CUDA_CHECK_THROW(cudaEventCreate(&stopEvent));
+
+      CUDA_CHECK_THROW(cudaEventRecord(startEvent, nullptr));
+      launchRenderSceneKernel(dShapes, shapeCount_, dOutput, width_, height_, nullptr);
+      CUDA_CHECK_THROW(cudaGetLastError());
+      CUDA_CHECK_THROW(cudaEventRecord(stopEvent, nullptr));
+      CUDA_CHECK_THROW(cudaEventSynchronize(stopEvent));
+
+      float kernelMs = 0.0F;
+      CUDA_CHECK_THROW(cudaEventElapsedTime(&kernelMs, startEvent, stopEvent));
+      gpuDurationMs_ = static_cast<double>(kernelMs);
+
+      CUDA_CHECK_THROW(cudaMemcpy(output_.data(), dOutput, outputBytes, cudaMemcpyDeviceToHost));
+
+      const auto totalStop = std::chrono::steady_clock::now();
+      totalDurationMs_ = std::chrono::duration<double, std::milli>(totalStop - totalStart).count();
+      gpuMemoryBytes_ = shapeBytes + outputBytes;
+
+      if (startEvent) cudaEventDestroy(startEvent);
+      if (stopEvent) cudaEventDestroy(stopEvent);
+      if (dShapes) cudaFree(dShapes);
+      if (dOutput) cudaFree(dOutput);
+    } catch (const std::exception& ex) {
+      if (startEvent) cudaEventDestroy(startEvent);
+      if (stopEvent) cudaEventDestroy(stopEvent);
+      if (dShapes) cudaFree(dShapes);
+      if (dOutput) cudaFree(dOutput);
+      SetError(ex.what());
+    }
+  }
+
+  void OnOK() override {
+    Napi::HandleScope scope(Env());
+
+    Napi::Object result = Napi::Object::New(Env());
+    Napi::ArrayBuffer outBuffer = Napi::ArrayBuffer::New(Env(), output_.size());
+    std::memcpy(outBuffer.Data(), output_.data(), output_.size());
+    result.Set("output", Napi::Uint8Array::New(Env(), output_.size(), outBuffer, 0));
+    result.Set("gpuDurationMs", Napi::Number::New(Env(), gpuDurationMs_));
+    result.Set("totalDurationMs", Napi::Number::New(Env(), totalDurationMs_));
+    result.Set("timingSource", Napi::String::New(Env(), "gpu-timestamp"));
+    result.Set("gpuMemoryBytes", Napi::Number::New(Env(), static_cast<double>(gpuMemoryBytes_)));
+
+    deferred_.Resolve(result);
+  }
+
+  void OnError(const Napi::Error& error) override {
+    Napi::HandleScope scope(Env());
+    deferred_.Reject(error.Value());
+  }
+
+private:
+  Napi::Promise::Deferred deferred_;
+  std::vector<float> shapes_;
+  int shapeCount_ = 0;
+  int width_ = 0;
+  int height_ = 0;
+  std::vector<uint8_t> output_;
+  double gpuDurationMs_ = 0.0;
+  double totalDurationMs_ = 0.0;
+  size_t gpuMemoryBytes_ = 0;
+};
+
 Napi::Value MultiplyMatrixCuda(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
 
@@ -1724,6 +1836,31 @@ Napi::Value UnloadVideoPipeline(const Napi::CallbackInfo& info) {
   return promise;
 }
 
+Napi::Value RenderScene(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+
+  try {
+    if (info.Length() < 1 || !info[0].IsObject()) {
+      throw std::runtime_error("renderScene expects an options object with shapes Float32Array.");
+    }
+
+    const Napi::Object options = info[0].As<Napi::Object>();
+    const int shapeCount = options.Get("count").As<Napi::Number>().Int32Value();
+    const int width = options.Get("width").As<Napi::Number>().Int32Value();
+    const int height = options.Get("height").As<Napi::Number>().Int32Value();
+    const size_t expectedLength = static_cast<size_t>(shapeCount) * static_cast<size_t>(kRenderShapeStride);
+    std::vector<float> shapes = ParseFloat32Array(options, "shapes", expectedLength);
+
+    auto* worker = new CudaRenderSceneWorker(env, std::move(shapes), shapeCount, width, height);
+    Napi::Promise promise = worker->GetPromise();
+    worker->Queue();
+    return promise;
+  } catch (const std::exception& ex) {
+    Napi::Error::New(env, ex.what()).ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+}
+
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("multiplyMatrixCuda", Napi::Function::New(env, MultiplyMatrixCuda));
   exports.Set("loadModel", Napi::Function::New(env, LoadModel));
@@ -1736,6 +1873,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("processVideoFrame", Napi::Function::New(env, ProcessVideoFrame));
   exports.Set("videoHistogram", Napi::Function::New(env, VideoHistogram));
   exports.Set("unloadVideoPipeline", Napi::Function::New(env, UnloadVideoPipeline));
+  exports.Set("renderScene", Napi::Function::New(env, RenderScene));
   return exports;
 }
 

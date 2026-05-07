@@ -11,7 +11,8 @@
     "format": "prettier --write src/**/*.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "bench": "tsx src/benchmarks/runner.ts"
+    "bench": "tsx src/benchmarks/runner.ts",
+    "render:bench": "tsx src/benchmarks/render-scene.ts"
   },
   "dependencies": {
     "@fastify/cors": "^11.2.0",

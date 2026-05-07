@@ -73,6 +73,7 @@ src/
 | POST | /ai/predict/mlp | Run MLP inference on `webgpu` or `cuda` |
 | POST | /ai/predict/cnn | Run Mini-VGG CNN inference on `webgpu` or `cuda` |
 | POST | /ai/unload | Unload selected model (`mlp`/`cnn`) or both |
+| POST | /render | Procedural SDF scene renderer (webgpu-render/webgpu-compute/cuda) |
 | GET | /benchmark/status/:id | Poll job status |
 | GET | /benchmark/results | All results |
 | DELETE | /benchmark/results | Clear results |
@@ -184,5 +185,5 @@ npm run build    # Compile TypeScript
 npm run start    # Run compiled server
 npm run test     # Run unit tests
 npm run bench    # Run CLI benchmarks
+npm run render:bench # Run render scene benchmark
 ```
-

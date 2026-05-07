@@ -14,6 +14,7 @@ constexpr int kCnnConvBlockSize = 16;
 constexpr int kCnnPoolBlockSize = 16;
 constexpr int kVideoBlockSize = 16;
 constexpr int kVideoHistogramBlockSize = 256;
+constexpr int kRenderBlockSize = 16;
 
 __device__ __forceinline__ uint32_t hash32(uint32_t x) {
   uint32_t v = x * 747796405u + 2891336453u;
@@ -318,10 +319,10 @@ __global__ void videoBilinearDownscaleKernel(
   );
 
   output[outY * dstWidth + outX] = make_uchar4(
-    static_cast<unsigned char>(fminf(fmaxf(out.x, 0.0f), 255.0f)),
-    static_cast<unsigned char>(fminf(fmaxf(out.y, 0.0f), 255.0f)),
-    static_cast<unsigned char>(fminf(fmaxf(out.z, 0.0f), 255.0f)),
-    static_cast<unsigned char>(fminf(fmaxf(out.w, 0.0f), 255.0f))
+    static_cast<unsigned char>(fminf(fmaxf(roundf(out.x), 0.0f), 255.0f)),
+    static_cast<unsigned char>(fminf(fmaxf(roundf(out.y), 0.0f), 255.0f)),
+    static_cast<unsigned char>(fminf(fmaxf(roundf(out.z), 0.0f), 255.0f)),
+    static_cast<unsigned char>(fminf(fmaxf(roundf(out.w), 0.0f), 255.0f))
   );
 }
 
@@ -339,6 +340,108 @@ __global__ void videoRgbHistogramKernel(
   atomicAdd(&histogram[static_cast<unsigned int>(pixel.x)], 1U);
   atomicAdd(&histogram[256U + static_cast<unsigned int>(pixel.y)], 1U);
   atomicAdd(&histogram[512U + static_cast<unsigned int>(pixel.z)], 1U);
+}
+
+__device__ __forceinline__ float2 make_f2(float x, float y) {
+  return make_float2(x, y);
+}
+
+__device__ __forceinline__ float2 sub2(float2 a, float2 b) {
+  return make_f2(a.x - b.x, a.y - b.y);
+}
+
+__device__ __forceinline__ float2 mul2(float2 a, float b) {
+  return make_f2(a.x * b, a.y * b);
+}
+
+__device__ __forceinline__ float2 abs2(float2 v) {
+  return make_f2(fabsf(v.x), fabsf(v.y));
+}
+
+__device__ __forceinline__ float dot2(float2 a, float2 b) {
+  return a.x * b.x + a.y * b.y;
+}
+
+__device__ __forceinline__ float length2(float2 v) {
+  return sqrtf(v.x * v.x + v.y * v.y);
+}
+
+__device__ __forceinline__ float signf_fast(float v) {
+  return (v > 0.0f) - (v < 0.0f);
+}
+
+__device__ float sdfCircle(float2 p, float r) {
+  return length2(p) - r;
+}
+
+__device__ float sdfBox(float2 p, float r) {
+  const float2 d = sub2(abs2(p), make_f2(r, r));
+  const float2 dmax = make_f2(fmaxf(d.x, 0.0f), fmaxf(d.y, 0.0f));
+  const float outside = length2(dmax);
+  const float inside = fminf(fmaxf(d.x, d.y), 0.0f);
+  return outside + inside;
+}
+
+__device__ float sdfTriangle(float2 pIn, float r) {
+  const float k = 1.7320508f;
+  float2 p = pIn;
+  p.x = fabsf(p.x) - r;
+  p.y = p.y + r / k;
+  if (p.x + k * p.y > 0.0f) {
+    p = mul2(make_f2(p.x - k * p.y, -k * p.x - p.y), 0.5f);
+  }
+  p.x = p.x - fminf(fmaxf(p.x, -2.0f * r), 0.0f);
+  return -length2(p) * signf_fast(p.y);
+}
+
+__global__ void renderSceneKernel(
+  const float* __restrict__ shapes,
+  int shapeCount,
+  uchar4* __restrict__ output,
+  int width,
+  int height
+) {
+  const int x = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+  const int y = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
+
+  if (x >= width || y >= height) {
+    return;
+  }
+
+  const float pixelX = static_cast<float>(x) + 0.5f;
+  const float pixelY = static_cast<float>(y) + 0.5f;
+
+  float bestDepth = 2.0f;
+  float4 bestColor = make_float4(0.0f, 0.0f, 0.0f, 0.0f);
+
+  for (int i = 0; i < shapeCount; ++i) {
+    const float* shape = shapes + i * 12;
+    const int typeId = static_cast<int>(shape[0] + 0.5f);
+    const float2 local = make_f2(pixelX - shape[1], pixelY - shape[2]);
+    const float size = shape[3];
+    const float depth = shape[4];
+
+    float dist = 1.0f;
+    if (typeId == 0) {
+      dist = sdfCircle(local, size);
+    } else if (typeId == 1) {
+      dist = sdfBox(local, size);
+    } else {
+      dist = sdfTriangle(local, size);
+    }
+
+    if (dist <= 0.0f && depth < bestDepth) {
+      bestDepth = depth;
+      bestColor = make_float4(shape[5], shape[6], shape[7], shape[8]);
+    }
+  }
+
+  output[y * width + x] = make_uchar4(
+    static_cast<unsigned char>(fminf(fmaxf(roundf(bestColor.x * 255.0f), 0.0f), 255.0f)),
+    static_cast<unsigned char>(fminf(fmaxf(roundf(bestColor.y * 255.0f), 0.0f), 255.0f)),
+    static_cast<unsigned char>(fminf(fmaxf(roundf(bestColor.z * 255.0f), 0.0f), 255.0f)),
+    static_cast<unsigned char>(fminf(fmaxf(roundf(bestColor.w * 255.0f), 0.0f), 255.0f))
+  );
 }
 
 }
@@ -495,3 +598,25 @@ void launchVideoRgbHistogramKernel(
   );
 }
 
+void launchRenderSceneKernel(
+  const float* shapes,
+  int shapeCount,
+  unsigned char* outputRgba,
+  int width,
+  int height,
+  cudaStream_t stream
+) {
+  const dim3 block(kRenderBlockSize, kRenderBlockSize);
+  const dim3 grid(
+    static_cast<unsigned int>((width + kRenderBlockSize - 1) / kRenderBlockSize),
+    static_cast<unsigned int>((height + kRenderBlockSize - 1) / kRenderBlockSize)
+  );
+
+  renderSceneKernel<<<grid, block, 0, stream>>>(
+    shapes,
+    shapeCount,
+    reinterpret_cast<uchar4*>(outputRgba),
+    width,
+    height
+  );
+}

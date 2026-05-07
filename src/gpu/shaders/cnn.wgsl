@@ -92,7 +92,7 @@ fn maxPool2x2(
   let inBaseX = outX * 2u;
   let inBaseY = outY * 2u;
 
-  var maxValue = -1000000.0f;
+  var maxValue: f32 = -3.402823466e+38f;
   for (var dy: u32 = 0u; dy < 2u; dy = dy + 1u) {
     for (var dx: u32 = 0u; dx < 2u; dx = dx + 1u) {
       let inX = inBaseX + dx;

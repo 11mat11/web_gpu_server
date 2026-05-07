@@ -69,6 +69,14 @@ type NativeVideoHistogramResult = {
   timingSource: 'gpu-timestamp'
 }
 
+type NativeRenderSceneResult = {
+  output: Uint8Array
+  gpuDurationMs: number
+  totalDurationMs: number
+  timingSource: 'gpu-timestamp'
+  gpuMemoryBytes: number
+}
+
 type NativeCudaAddon = {
   multiplyMatrixCuda: (params: Record<string, unknown>) => Promise<NativeCudaResult>
   loadModel: (params: Record<string, unknown>) => Promise<NativeMlpLoadResult>
@@ -81,6 +89,7 @@ type NativeCudaAddon = {
   processVideoFrame: (params: Record<string, unknown>) => Promise<NativeVideoFrameResult>
   videoHistogram: (params: Record<string, unknown>) => Promise<NativeVideoHistogramResult>
   unloadVideoPipeline: () => Promise<NativeMlpUnloadResult>
+  renderScene: (params: Record<string, unknown>) => Promise<NativeRenderSceneResult>
 }
 
 export interface MultiplyMatrixCudaParams {
@@ -164,6 +173,16 @@ export interface CudaVideoHistogramResult {
   gpuTimeMs: number
   totalDurationMs: number
   timingSource: 'gpu-timestamp'
+}
+
+export interface CudaRenderSceneResult {
+  rgba: Buffer
+  gpuTimeMs: number
+  totalDurationMs: number
+  timingSource: 'gpu-timestamp'
+  gpuMemoryBytes: number
+  width: number
+  height: number
 }
 
 let cachedAddon: NativeCudaAddon | null = null
@@ -417,5 +436,16 @@ export async function computeHistogramCuda(input: Uint8Array): Promise<CudaVideo
   }
 }
 
-
-
+export async function renderSceneCuda(shapes: Float32Array, count: number, width = 1920, height = 1080): Promise<CudaRenderSceneResult> {
+  const addon = getAddon()
+  const result = await addon.renderScene({ shapes, count, width, height })
+  return {
+    rgba: Buffer.from(result.output),
+    gpuTimeMs: result.gpuDurationMs,
+    totalDurationMs: result.totalDurationMs,
+    timingSource: result.timingSource,
+    gpuMemoryBytes: result.gpuMemoryBytes,
+    width,
+    height,
+  }
+}

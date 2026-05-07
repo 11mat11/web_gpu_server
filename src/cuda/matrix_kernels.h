@@ -78,3 +78,11 @@ void launchVideoRgbHistogramKernel(
   cudaStream_t stream
 );
 
+void launchRenderSceneKernel(
+  const float* shapes,
+  int shapeCount,
+  unsigned char* outputRgba,
+  int width,
+  int height,
+  cudaStream_t stream
+);
