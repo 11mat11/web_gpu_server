@@ -13,6 +13,14 @@ const InputModeSchema = z.enum(['random', 'custom']).describe('Źródło danych 
 const TimingSourceSchema = z.enum(['gpu-timestamp', 'cpu-clock']).describe('Źródło pomiaru czasu.').example('gpu-timestamp')
 const MATRIX_C_RESPONSE_LIMIT = 100
 const U32_MAX = 0xffffffff
+const MemorySchema = z
+  .object({
+    gpuBytes: z.number().nullable().describe('Suma bajtów GPUBuffer utworzonych w żądaniu.').example(67108864),
+    hostBytes: z.number().nullable().describe('Suma bajtów buforów Buffer/ArrayBuffer utworzonych w żądaniu.').example(33554432),
+    serverRssBytes: z.number().describe('process.memoryUsage().rss po zakończeniu obliczeń.').example(123456789),
+  })
+  .describe('Ujednolicony raport pamięci dla żądania obliczeniowego.')
+  .example({ gpuBytes: 67108864, hostBytes: 33554432, serverRssBytes: 123456789 })
 
 function getSeed(seed?: number): number {
   if (typeof seed === 'number' && Number.isFinite(seed)) {
@@ -151,35 +159,15 @@ function exceedsGpuMatrixLimits(gpu: GPUDevice, size: number): boolean {
   return matrixBytes > gpu.limits.maxBufferSize || matrixBytes > gpu.limits.maxStorageBufferBindingSize
 }
 
-type ProcessMemorySnapshot = {
-  rss: number
-  heapTotal: number
-  heapUsed: number
-  external: number
-  arrayBuffers: number
-}
-
-type ProcessMemoryMetrics = {
-  before: ProcessMemorySnapshot
-  after: ProcessMemorySnapshot
-}
-
-function captureProcessMemory(): ProcessMemorySnapshot {
-  const usage = process.memoryUsage()
-  return {
-    rss: usage.rss,
-    heapTotal: usage.heapTotal,
-    heapUsed: usage.heapUsed,
-    external: usage.external,
-    arrayBuffers: usage.arrayBuffers,
+function sumByteLengths(
+  ...buffers: Array<ArrayBuffer | ArrayBufferView | null | undefined>
+): number {
+  let total = 0
+  for (const buffer of buffers) {
+    if (!buffer) continue
+    total += buffer.byteLength
   }
-}
-
-function buildProcessMemoryMetrics(before: ProcessMemorySnapshot, after: ProcessMemorySnapshot): ProcessMemoryMetrics {
-  return {
-    before,
-    after,
-  }
+  return total
 }
 
 /**
@@ -324,7 +312,7 @@ export async function matrixRoute(server: FastifyInstance) {
           200: {
             type: 'object',
             description:
-              'Wynik mnożenia i metryki czasu/pamięci procesu. timingSource=gpu-timestamp dla backendów GPU (webgpu/cuda), timingSource=cpu-clock dla backendu cpu.',
+              'Wynik mnożenia i metryki czasu/pamięci. timingSource=gpu-timestamp dla backendów GPU (webgpu/cuda), timingSource=cpu-clock dla backendu cpu.',
             properties: {
               backend: { type: 'string' },
               size: { type: 'number' },
@@ -343,30 +331,13 @@ export async function matrixRoute(server: FastifyInstance) {
                 enum: ['gpu-timestamp', 'cpu-clock'],
                 description: 'Źródło pomiaru czasu: znaczniki GPU lub zegar CPU.',
               },
-              processMemory: {
+              memory: {
                 type: 'object',
-                description: 'Rzeczywisty snapshot pamięci procesu Node.js (before/after) dla bieżącego requestu.',
+                description: 'Ujednolicony raport pamięci dla żądania obliczeniowego.',
                 properties: {
-                  before: {
-                    type: 'object',
-                    properties: {
-                      rss: { type: 'number' },
-                      heapTotal: { type: 'number' },
-                      heapUsed: { type: 'number' },
-                      external: { type: 'number' },
-                      arrayBuffers: { type: 'number' },
-                    },
-                  },
-                  after: {
-                    type: 'object',
-                    properties: {
-                      rss: { type: 'number' },
-                      heapTotal: { type: 'number' },
-                      heapUsed: { type: 'number' },
-                      external: { type: 'number' },
-                      arrayBuffers: { type: 'number' },
-                    },
-                  },
+                  gpuBytes: { type: ['number', 'null'] },
+                  hostBytes: { type: ['number', 'null'] },
+                  serverRssBytes: { type: 'number' },
                 },
               },
               gflops: { type: 'number' },
@@ -430,9 +401,8 @@ export async function matrixRoute(server: FastifyInstance) {
       let multiplyDurationMs: number | null = null
       let gpuDurationMs: number | null = null
       let timingSource: z.infer<typeof TimingSourceSchema> = 'cpu-clock'
-      let processMemory: ProcessMemoryMetrics | null = null
       let effectiveOptimized = false
-      const processMemoryBefore = captureProcessMemory()
+      let gpuBytes: number | null = null
 
       try {
         if (body.backend === 'webgpu') {
@@ -471,6 +441,7 @@ export async function matrixRoute(server: FastifyInstance) {
             multiplyDurationMs = result.multiplyDurationMs
             timingSource = result.timingSource
             effectiveOptimized = body.optimized
+            gpuBytes = result.gpuMemoryBytes
           } else {
             const result = await multiplySquareMatricesWebGpu(body.size, matrixA!, matrixB!, {
               readback: true,
@@ -484,6 +455,7 @@ export async function matrixRoute(server: FastifyInstance) {
             multiplyDurationMs = result.multiplyDurationMs
             timingSource = result.timingSource
             effectiveOptimized = body.optimized
+            gpuBytes = result.gpuMemoryBytes
           }
         } else if (body.backend === 'cuda') {
           const cudaState = getCudaRuntimeState()
@@ -515,6 +487,7 @@ export async function matrixRoute(server: FastifyInstance) {
           multiplyDurationMs = result.multiplyDurationMs
           timingSource = result.timingSource
           effectiveOptimized = body.optimized
+          gpuBytes = result.memory.gpuAllocatedBytes
         } else {
           if (body.inputMode === 'random') {
             const cpuGenerationStart = performance.now()
@@ -529,8 +502,6 @@ export async function matrixRoute(server: FastifyInstance) {
           multiplyDurationMs = performance.now() - cpuMulStart
           timingSource = 'cpu-clock'
         }
-
-        processMemory = buildProcessMemoryMetrics(processMemoryBefore, captureProcessMemory())
       } catch (err) {
         return reply.code(500).send({
           error: 'matrix_multiply_failed',
@@ -545,6 +516,12 @@ export async function matrixRoute(server: FastifyInstance) {
       const ops = 2 * body.size ** 3
       const gflopsBaseMs = multiplyDurationMs ?? computeDurationMs
       const gflops = gflopsBaseMs > 0 ? ops / (gflopsBaseMs / 1000) / 1e9 : 0
+      const hostBytes = sumByteLengths(matrixA, matrixB, matrixC)
+      const memory: z.infer<typeof MemorySchema> = {
+        gpuBytes,
+        hostBytes,
+        serverRssBytes: process.memoryUsage().rss,
+      }
 
       const response: {
         backend: 'webgpu' | 'cuda' | 'cpu'
@@ -557,7 +534,7 @@ export async function matrixRoute(server: FastifyInstance) {
         gpuDurationMs: number | null
         backendDurationMs: number
         timingSource: z.infer<typeof TimingSourceSchema>
-        processMemory: ProcessMemoryMetrics
+        memory: z.infer<typeof MemorySchema>
         gflops: number
         matrixC?: number[][]
       } = {
@@ -571,7 +548,7 @@ export async function matrixRoute(server: FastifyInstance) {
         gpuDurationMs: gpuDurationMs === null ? null : Number(gpuDurationMs.toFixed(3)),
         backendDurationMs: Number(computeDurationMs.toFixed(3)),
         timingSource,
-        processMemory: processMemory ?? buildProcessMemoryMetrics(processMemoryBefore, captureProcessMemory()),
+        memory,
         gflops: Number(gflops.toFixed(2)),
       }
 

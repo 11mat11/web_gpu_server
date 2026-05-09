@@ -11,6 +11,14 @@ import {
 
 const InputModeSchema = z.enum(['random', 'custom']).describe('Źródło danych wejściowych obrazu.').example('random')
 const U32_MAX = 0xffffffff
+const MemorySchema = z
+  .object({
+    gpuBytes: z.number().nullable().describe('Suma bajtów GPUBuffer utworzonych w żądaniu.').example(67108864),
+    hostBytes: z.number().nullable().describe('Suma bajtów buforów Buffer/ArrayBuffer utworzonych w żądaniu.').example(33554432),
+    serverRssBytes: z.number().describe('process.memoryUsage().rss po zakończeniu obliczeń.').example(123456789),
+  })
+  .describe('Ujednolicony raport pamięci dla żądania obliczeniowego.')
+  .example({ gpuBytes: 67108864, hostBytes: 33554432, serverRssBytes: 123456789 })
 
 const ImageBodySchema = z
   .object({
@@ -61,32 +69,15 @@ const ImageBodySchema = z
   .describe('Parametry filtrowania obrazu do benchmarku WebGPU/CUDA.')
   .example({ filter: 'gaussian', backend: 'webgpu', inputMode: 'random', width: 1920, height: 1080, seed: 123456 })
 
-type ProcessMemorySnapshot = {
-  rss: number
-  heapTotal: number
-  heapUsed: number
-  external: number
-  arrayBuffers: number
-}
-
-type ProcessMemoryMetrics = {
-  before: ProcessMemorySnapshot
-  after: ProcessMemorySnapshot
-}
-
-function captureProcessMemory(): ProcessMemorySnapshot {
-  const usage = process.memoryUsage()
-  return {
-    rss: usage.rss,
-    heapTotal: usage.heapTotal,
-    heapUsed: usage.heapUsed,
-    external: usage.external,
-    arrayBuffers: usage.arrayBuffers,
+function sumByteLengths(
+  ...buffers: Array<ArrayBuffer | ArrayBufferView | null | undefined>
+): number {
+  let total = 0
+  for (const buffer of buffers) {
+    if (!buffer) continue
+    total += buffer.byteLength
   }
-}
-
-function buildProcessMemoryMetrics(before: ProcessMemorySnapshot, after: ProcessMemorySnapshot): ProcessMemoryMetrics {
-  return { before, after }
+  return total
 }
 
 function getSeed(seed?: number): number {
@@ -172,31 +163,13 @@ export async function imageRoute(server: FastifyInstance) {
               timingSource: { type: 'string', enum: ['gpu-timestamp', 'cpu-clock'] },
               pixelsPerSecond: { type: 'number' },
               imageBase64: { type: 'string' },
-              gpuMemoryBytes: { type: 'number' },
-              hostMemoryBytes: { type: 'number' },
-              processMemory: {
+              memory: {
                 type: 'object',
+                description: 'Ujednolicony raport pamięci dla żądania obliczeniowego.',
                 properties: {
-                  before: {
-                    type: 'object',
-                    properties: {
-                      rss: { type: 'number' },
-                      heapTotal: { type: 'number' },
-                      heapUsed: { type: 'number' },
-                      external: { type: 'number' },
-                      arrayBuffers: { type: 'number' },
-                    },
-                  },
-                  after: {
-                    type: 'object',
-                    properties: {
-                      rss: { type: 'number' },
-                      heapTotal: { type: 'number' },
-                      heapUsed: { type: 'number' },
-                      external: { type: 'number' },
-                      arrayBuffers: { type: 'number' },
-                    },
-                  },
+                  gpuBytes: { type: ['number', 'null'] },
+                  hostBytes: { type: ['number', 'null'] },
+                  serverRssBytes: { type: 'number' },
                 },
               },
             },
@@ -256,14 +229,12 @@ export async function imageRoute(server: FastifyInstance) {
 
       const inputPacked = packRgbaBytesToU32(inputBytes)
 
-      const processMemoryBefore = captureProcessMemory()
-
       let gpuDurationMs = 0
       let backendDurationMs = 0
       let timingSource: 'gpu-timestamp' | 'cpu-clock' = 'cpu-clock'
       let imageBase64 = ''
-      let gpuMemoryBytes = 0
-      let hostMemoryBytes = 0
+      let gpuBytes: number | null = null
+      let hostBytes = 0
 
       try {
         if (body.backend === 'webgpu') {
@@ -274,10 +245,11 @@ export async function imageRoute(server: FastifyInstance) {
           gpuDurationMs = result.gpuDurationMs
           backendDurationMs = result.backendDurationMs
           timingSource = result.timingSource
-          gpuMemoryBytes = result.gpuMemoryBytes
-          hostMemoryBytes = inputBytes.byteLength + expectedBytes
+          gpuBytes = result.gpuMemoryBytes
           const rgba = unpackU32ToRgbaBytes(result.output)
-          imageBase64 = asBase64(Buffer.from(rgba))
+          const outputBuffer = Buffer.from(rgba)
+          imageBase64 = asBase64(outputBuffer)
+          hostBytes = sumByteLengths(inputBytes, inputPacked, rgba, outputBuffer)
         } else if (body.backend === 'cuda') {
           const cudaState = getCudaRuntimeState()
           if (!cudaState.enabled) {
@@ -299,17 +271,19 @@ export async function imageRoute(server: FastifyInstance) {
           gpuDurationMs = result.gpuDurationMs
           backendDurationMs = result.backendDurationMs
           timingSource = result.timingSource
-          gpuMemoryBytes = result.memoryEstimate.gpuAllocatedBytes
-          hostMemoryBytes = result.memoryEstimate.hostAllocatedBytes
+          gpuBytes = result.memory.gpuAllocatedBytes
           imageBase64 = asBase64(result.output)
+          hostBytes = sumByteLengths(inputBytes, inputPacked, result.output)
         } else {
           const cpuStart = performance.now()
           const cpuOutput = gaussianBlurCpu(inputPacked, body.width, body.height)
           gpuDurationMs = performance.now() - cpuStart
           backendDurationMs = gpuDurationMs
           timingSource = 'cpu-clock'
-          hostMemoryBytes = inputBytes.byteLength + expectedBytes
-          imageBase64 = asBase64(Buffer.from(unpackU32ToRgbaBytes(cpuOutput)))
+          const rgba = unpackU32ToRgbaBytes(cpuOutput)
+          const outputBuffer = Buffer.from(rgba)
+          imageBase64 = asBase64(outputBuffer)
+          hostBytes = sumByteLengths(inputBytes, inputPacked, cpuOutput, rgba, outputBuffer)
         }
       } catch (error) {
         return reply.code(500).send({
@@ -321,6 +295,11 @@ export async function imageRoute(server: FastifyInstance) {
       const serverDurationMs = performance.now() - serverStart
       const pixels = body.width * body.height
       const pixelsPerSecond = gpuDurationMs > 0 ? Math.round(pixels / (gpuDurationMs / 1000)) : 0
+      const memory: z.infer<typeof MemorySchema> = {
+        gpuBytes,
+        hostBytes,
+        serverRssBytes: process.memoryUsage().rss,
+      }
 
       return reply.send({
         filter: body.filter,
@@ -333,9 +312,7 @@ export async function imageRoute(server: FastifyInstance) {
         timingSource,
         pixelsPerSecond,
         imageBase64,
-        gpuMemoryBytes,
-        hostMemoryBytes,
-        processMemory: buildProcessMemoryMetrics(processMemoryBefore, captureProcessMemory()),
+        memory,
       })
     },
   )

@@ -184,50 +184,11 @@ double ToMiB(size_t bytes) {
   return std::round((static_cast<double>(bytes) / (1024.0 * 1024.0)) * 1000.0) / 1000.0;
 }
 
-Napi::Object BuildMemoryEstimate(Napi::Env env, size_t gpuAllocatedBytes, size_t hostAllocatedBytes) {
+Napi::Object BuildMemoryMetrics(Napi::Env env, size_t gpuAllocatedBytes, size_t hostAllocatedBytes) {
   Napi::Object memory = Napi::Object::New(env);
   memory.Set("gpuAllocatedBytes", Napi::Number::New(env, static_cast<double>(gpuAllocatedBytes)));
-  memory.Set("gpuAllocatedMiB", Napi::Number::New(env, ToMiB(gpuAllocatedBytes)));
   memory.Set("hostAllocatedBytes", Napi::Number::New(env, static_cast<double>(hostAllocatedBytes)));
-  memory.Set("hostAllocatedMiB", Napi::Number::New(env, ToMiB(hostAllocatedBytes)));
   return memory;
-}
-
-size_t ComputeMlpGpuBytes() {
-  const size_t weightsBytes = (kMlpW1Count + kMlpB1Count + kMlpW2Count + kMlpB2Count + kMlpW3Count + kMlpB3Count) * sizeof(float);
-  const size_t activationsBytes = (kMlpInputSize + kMlpHidden1Size + kMlpHidden2Size + kMlpOutputSize) * sizeof(float);
-  return weightsBytes + activationsBytes;
-}
-
-size_t ComputeCnnGpuBytes() {
-  const size_t weightsBytes =
-    (kCnnConv1WCount +
-     kCnnConv1BCount +
-     kCnnConv2WCount +
-     kCnnConv2BCount +
-     kCnnConv3WCount +
-     kCnnConv3BCount +
-     kCnnConv4WCount +
-     kCnnConv4BCount +
-     kCnnDense1WCount +
-     kCnnDense1BCount +
-     kCnnDense2WCount +
-     kCnnDense2BCount) * sizeof(float);
-
-  const size_t activationsBytes =
-    (static_cast<size_t>(kCnnInputChannels) * static_cast<size_t>(kCnnInputHeight) * static_cast<size_t>(kCnnInputWidth) +
-     static_cast<size_t>(kCnnConv1OutChannels) * static_cast<size_t>(kCnnInputHeight) * static_cast<size_t>(kCnnInputWidth) +
-     static_cast<size_t>(kCnnConv1OutChannels) * static_cast<size_t>(kCnnPool1Height) * static_cast<size_t>(kCnnPool1Width) +
-     static_cast<size_t>(kCnnConv2OutChannels) * static_cast<size_t>(kCnnPool1Height) * static_cast<size_t>(kCnnPool1Width) +
-     static_cast<size_t>(kCnnConv2OutChannels) * static_cast<size_t>(kCnnPool2Height) * static_cast<size_t>(kCnnPool2Width) +
-     static_cast<size_t>(kCnnConv3OutChannels) * static_cast<size_t>(kCnnPool2Height) * static_cast<size_t>(kCnnPool2Width) +
-     static_cast<size_t>(kCnnConv3OutChannels) * static_cast<size_t>(kCnnPool3Height) * static_cast<size_t>(kCnnPool3Width) +
-     static_cast<size_t>(kCnnConv4OutChannels) * static_cast<size_t>(kCnnPool3Height) * static_cast<size_t>(kCnnPool3Width) +
-     static_cast<size_t>(kCnnConv4OutChannels) * static_cast<size_t>(kCnnPool4Height) * static_cast<size_t>(kCnnPool4Width) +
-     static_cast<size_t>(kCnnDense1Out) +
-     static_cast<size_t>(kCnnOutputSize)) * sizeof(float);
-
-  return weightsBytes + activationsBytes;
 }
 
 struct CudaMlpModelState {
@@ -545,12 +506,15 @@ void CudaMatrixWorker::Execute() {
     const auto matrixElements = static_cast<size_t>(request_.size) * static_cast<size_t>(request_.size);
     const auto matrixBytes = matrixElements * sizeof(float);
 
-    gpuAllocatedBytes_ = matrixBytes * 3;
+    gpuAllocatedBytes_ = 0;
     hostAllocatedBytes_ = (request_.randomInput ? 0 : matrixBytes * 2) + (request_.readback ? matrixBytes : 0);
 
     CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&dMatrixA_), matrixBytes));
+    gpuAllocatedBytes_ += matrixBytes;
     CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&dMatrixB_), matrixBytes));
+    gpuAllocatedBytes_ += matrixBytes;
     CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&dMatrixC_), matrixBytes));
+    gpuAllocatedBytes_ += matrixBytes;
 
     if (request_.randomInput) {
       CUDA_CHECK_THROW(cudaEventCreate(&generationStartEvent_));
@@ -629,7 +593,7 @@ Napi::Value CudaMatrixWorker::BuildResult(Napi::Env env) const {
   result.Set("multiplyDurationMs", Napi::Number::New(env, multiplyDurationMs_));
   result.Set("backendDurationMs", Napi::Number::New(env, backendDurationMs_));
   result.Set("timingSource", Napi::String::New(env, "gpu-timestamp"));
-  result.Set("memoryEstimate", BuildMemoryEstimate(env, gpuAllocatedBytes_, hostAllocatedBytes_));
+  result.Set("memory", BuildMemoryMetrics(env, gpuAllocatedBytes_, hostAllocatedBytes_));
 
   return result;
 }
@@ -687,7 +651,7 @@ public:
     const size_t pixelCount = static_cast<size_t>(request_.width) * static_cast<size_t>(request_.height);
     const size_t imageBytes = pixelCount * 4;
 
-    gpuAllocatedBytes_ = imageBytes * 3;
+    gpuAllocatedBytes_ = 0;
     hostAllocatedBytes_ = request_.input.size() + (request_.readback ? imageBytes : 0);
 
     cudaEvent_t startEvent = nullptr;
@@ -695,8 +659,11 @@ public:
 
     try {
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&dInput_), imageBytes));
+      gpuAllocatedBytes_ += imageBytes;
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&dTemp_), imageBytes));
+      gpuAllocatedBytes_ += imageBytes;
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&dOutput_), imageBytes));
+      gpuAllocatedBytes_ += imageBytes;
 
       CUDA_CHECK_THROW(cudaMemcpy(dInput_, request_.input.data(), imageBytes, cudaMemcpyHostToDevice));
 
@@ -745,7 +712,7 @@ public:
     result.Set("gpuDurationMs", Napi::Number::New(Env(), gpuDurationMs_));
     result.Set("backendDurationMs", Napi::Number::New(Env(), backendDurationMs_));
     result.Set("timingSource", Napi::String::New(Env(), "gpu-timestamp"));
-    result.Set("memoryEstimate", BuildMemoryEstimate(Env(), gpuAllocatedBytes_, hostAllocatedBytes_));
+    result.Set("memory", BuildMemoryMetrics(Env(), gpuAllocatedBytes_, hostAllocatedBytes_));
 
     deferred_.Resolve(result);
   }
@@ -764,7 +731,8 @@ public:
 private:
   Napi::Promise::Deferred deferred_;
   CudaGaussianRequest request_;
-
+  size_t gpuAllocatedBytes_ = 0;
+  size_t hostAllocatedBytes_ = 0;
   unsigned char* dInput_ = nullptr;
   unsigned char* dTemp_ = nullptr;
   unsigned char* dOutput_ = nullptr;
@@ -772,8 +740,6 @@ private:
   std::vector<uint8_t> output_;
   double gpuDurationMs_ = 0.0;
   double backendDurationMs_ = 0.0;
-  size_t gpuAllocatedBytes_ = 0;
-  size_t hostAllocatedBytes_ = 0;
 };
 
 class CudaMlpLoadWorker final : public Napi::AsyncWorker {
@@ -797,17 +763,28 @@ public:
 
       FreeMlpModelLocked();
 
+      gpuAllocatedBytes_ = 0;
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gMlpModel.dW1), kMlpW1Count * sizeof(float)));
+      gpuAllocatedBytes_ += kMlpW1Count * sizeof(float);
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gMlpModel.dB1), kMlpB1Count * sizeof(float)));
+      gpuAllocatedBytes_ += kMlpB1Count * sizeof(float);
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gMlpModel.dW2), kMlpW2Count * sizeof(float)));
+      gpuAllocatedBytes_ += kMlpW2Count * sizeof(float);
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gMlpModel.dB2), kMlpB2Count * sizeof(float)));
+      gpuAllocatedBytes_ += kMlpB2Count * sizeof(float);
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gMlpModel.dW3), kMlpW3Count * sizeof(float)));
+      gpuAllocatedBytes_ += kMlpW3Count * sizeof(float);
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gMlpModel.dB3), kMlpB3Count * sizeof(float)));
+      gpuAllocatedBytes_ += kMlpB3Count * sizeof(float);
 
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gMlpModel.dInput), kMlpInputSize * sizeof(float)));
+      gpuAllocatedBytes_ += kMlpInputSize * sizeof(float);
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gMlpModel.dH1), kMlpHidden1Size * sizeof(float)));
+      gpuAllocatedBytes_ += kMlpHidden1Size * sizeof(float);
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gMlpModel.dH2), kMlpHidden2Size * sizeof(float)));
+      gpuAllocatedBytes_ += kMlpHidden2Size * sizeof(float);
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gMlpModel.dOut), kMlpOutputSize * sizeof(float)));
+      gpuAllocatedBytes_ += kMlpOutputSize * sizeof(float);
 
       const float* cursor = weights_.data();
       CUDA_CHECK_THROW(cudaMemcpy(gMlpModel.dW1, cursor, kMlpW1Count * sizeof(float), cudaMemcpyHostToDevice));
@@ -823,7 +800,7 @@ public:
       CUDA_CHECK_THROW(cudaMemcpy(gMlpModel.dB3, cursor, kMlpB3Count * sizeof(float), cudaMemcpyHostToDevice));
 
       gMlpModel.loaded = true;
-      gMlpModel.gpuAllocatedBytes = ComputeMlpGpuBytes();
+      gMlpModel.gpuAllocatedBytes = gpuAllocatedBytes_;
 
       hostAllocatedBytes_ = kMlpTotalWeightsCount * sizeof(float);
       gpuAllocatedBytes_ = gMlpModel.gpuAllocatedBytes;
@@ -837,7 +814,7 @@ public:
     Napi::HandleScope scope(Env());
     Napi::Object result = Napi::Object::New(Env());
     result.Set("status", Napi::String::New(Env(), "loaded"));
-    result.Set("memoryEstimate", BuildMemoryEstimate(Env(), gpuAllocatedBytes_, hostAllocatedBytes_));
+    result.Set("memory", BuildMemoryMetrics(Env(), gpuAllocatedBytes_, hostAllocatedBytes_));
     deferred_.Resolve(result);
   }
 
@@ -1007,29 +984,47 @@ public:
 
       FreeCnnModelLocked();
 
+      gpuAllocatedBytes_ = 0;
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dConv1W), kCnnConv1WCount * sizeof(float)));
+      gpuAllocatedBytes_ += kCnnConv1WCount * sizeof(float);
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dConv1B), kCnnConv1BCount * sizeof(float)));
+      gpuAllocatedBytes_ += kCnnConv1BCount * sizeof(float);
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dConv2W), kCnnConv2WCount * sizeof(float)));
+      gpuAllocatedBytes_ += kCnnConv2WCount * sizeof(float);
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dConv2B), kCnnConv2BCount * sizeof(float)));
+      gpuAllocatedBytes_ += kCnnConv2BCount * sizeof(float);
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dConv3W), kCnnConv3WCount * sizeof(float)));
+      gpuAllocatedBytes_ += kCnnConv3WCount * sizeof(float);
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dConv3B), kCnnConv3BCount * sizeof(float)));
+      gpuAllocatedBytes_ += kCnnConv3BCount * sizeof(float);
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dConv4W), kCnnConv4WCount * sizeof(float)));
+      gpuAllocatedBytes_ += kCnnConv4WCount * sizeof(float);
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dConv4B), kCnnConv4BCount * sizeof(float)));
+      gpuAllocatedBytes_ += kCnnConv4BCount * sizeof(float);
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dDense1W), kCnnDense1WCount * sizeof(float)));
+      gpuAllocatedBytes_ += kCnnDense1WCount * sizeof(float);
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dDense1B), kCnnDense1BCount * sizeof(float)));
+      gpuAllocatedBytes_ += kCnnDense1BCount * sizeof(float);
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dDense2W), kCnnDense2WCount * sizeof(float)));
+      gpuAllocatedBytes_ += kCnnDense2WCount * sizeof(float);
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dDense2B), kCnnDense2BCount * sizeof(float)));
+      gpuAllocatedBytes_ += kCnnDense2BCount * sizeof(float);
 
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dInput),
         static_cast<size_t>(kCnnInputChannels) * static_cast<size_t>(kCnnInputHeight) * static_cast<size_t>(kCnnInputWidth) * sizeof(float)));
+      gpuAllocatedBytes_ += static_cast<size_t>(kCnnInputChannels) * static_cast<size_t>(kCnnInputHeight) * static_cast<size_t>(kCnnInputWidth) * sizeof(float);
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dConv1Out),
         static_cast<size_t>(kCnnConv1OutChannels) * static_cast<size_t>(kCnnInputHeight) * static_cast<size_t>(kCnnInputWidth) * sizeof(float)));
+      gpuAllocatedBytes_ += static_cast<size_t>(kCnnConv1OutChannels) * static_cast<size_t>(kCnnInputHeight) * static_cast<size_t>(kCnnInputWidth) * sizeof(float);
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dPool1Out),
         static_cast<size_t>(kCnnConv1OutChannels) * static_cast<size_t>(kCnnPool1Height) * static_cast<size_t>(kCnnPool1Width) * sizeof(float)));
+      gpuAllocatedBytes_ += static_cast<size_t>(kCnnConv1OutChannels) * static_cast<size_t>(kCnnPool1Height) * static_cast<size_t>(kCnnPool1Width) * sizeof(float);
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dConv2Out),
         static_cast<size_t>(kCnnConv2OutChannels) * static_cast<size_t>(kCnnPool1Height) * static_cast<size_t>(kCnnPool1Width) * sizeof(float)));
+      gpuAllocatedBytes_ += static_cast<size_t>(kCnnConv2OutChannels) * static_cast<size_t>(kCnnPool1Height) * static_cast<size_t>(kCnnPool1Width) * sizeof(float);
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dPool2Out),
         static_cast<size_t>(kCnnConv2OutChannels) * static_cast<size_t>(kCnnPool2Height) * static_cast<size_t>(kCnnPool2Width) * sizeof(float)));
+      gpuAllocatedBytes_ += static_cast<size_t>(kCnnConv2OutChannels) * static_cast<size_t>(kCnnPool2Height) * static_cast<size_t>(kCnnPool2Width) * sizeof(float);
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dConv3Out),
         static_cast<size_t>(kCnnConv3OutChannels) * static_cast<size_t>(kCnnPool2Height) * static_cast<size_t>(kCnnPool2Width) * sizeof(float)));
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dPool3Out),
@@ -1067,7 +1062,7 @@ public:
       CUDA_CHECK_THROW(cudaMemcpy(gCnnModel.dDense2B, cursor, kCnnDense2BCount * sizeof(float), cudaMemcpyHostToDevice));
 
       gCnnModel.loaded = true;
-      gCnnModel.gpuAllocatedBytes = ComputeCnnGpuBytes();
+      gCnnModel.gpuAllocatedBytes = gpuAllocatedBytes_;
 
       hostAllocatedBytes_ = kCnnTotalWeightsCount * sizeof(float);
       gpuAllocatedBytes_ = gCnnModel.gpuAllocatedBytes;
@@ -1081,7 +1076,7 @@ public:
     Napi::HandleScope scope(Env());
     Napi::Object result = Napi::Object::New(Env());
     result.Set("status", Napi::String::New(Env(), "loaded"));
-    result.Set("memoryEstimate", BuildMemoryEstimate(Env(), gpuAllocatedBytes_, hostAllocatedBytes_));
+    result.Set("memory", BuildMemoryMetrics(Env(), gpuAllocatedBytes_, hostAllocatedBytes_));
     deferred_.Resolve(result);
   }
 
@@ -1302,7 +1297,7 @@ public:
     result.Set("gpuDurationMs", Napi::Number::New(Env(), gpuDurationMs_));
     result.Set("backendDurationMs", Napi::Number::New(Env(), backendDurationMs_));
     result.Set("timingSource", Napi::String::New(Env(), "gpu-timestamp"));
-    result.Set("memoryEstimate", BuildMemoryEstimate(Env(), gCnnModel.gpuAllocatedBytes, kCnnTotalWeightsCount * sizeof(float)));
+    result.Set("memory", BuildMemoryMetrics(Env(), gCnnModel.gpuAllocatedBytes, kCnnTotalWeightsCount * sizeof(float)));
 
     deferred_.Resolve(result);
   }
@@ -1396,7 +1391,7 @@ public:
     Napi::HandleScope scope(Env());
     Napi::Object result = Napi::Object::New(Env());
     result.Set("status", Napi::String::New(Env(), "ready"));
-    result.Set("gpuMemoryBytes", Napi::Number::New(Env(), static_cast<double>(gpuMemoryBytes_)));
+    result.Set("memory", BuildMemoryMetrics(Env(), gpuAllocatedBytes_, 0));
     deferred_.Resolve(result);
   }
 
@@ -1411,6 +1406,8 @@ private:
   int srcHeight_;
   int dstWidth_;
   int dstHeight_;
+  size_t gpuAllocatedBytes_ = 0;
+  size_t hostAllocatedBytes_ = 0;
   size_t gpuMemoryBytes_ = 0;
 };
 
@@ -1516,7 +1513,7 @@ public:
     result.Set("gpuDurationMs", Napi::Number::New(Env(), gpuDurationMs_));
     result.Set("backendDurationMs", Napi::Number::New(Env(), backendDurationMs_));
     result.Set("timingSource", Napi::String::New(Env(), "gpu-timestamp"));
-    result.Set("gpuMemoryBytes", Napi::Number::New(Env(), static_cast<double>(gpuMemoryBytes_)));
+    result.Set("memory", BuildMemoryMetrics(Env(), gpuMemoryBytes_, input_.size()));
 
     deferred_.Resolve(result);
   }
@@ -1531,6 +1528,8 @@ private:
   std::vector<uint8_t> input_;
   std::string quality_;
   std::vector<uint8_t> output_;
+  size_t gpuAllocatedBytes_ = 0;
+  size_t hostAllocatedBytes_ = 0;
   double gpuDurationMs_ = 0.0;
   double backendDurationMs_ = 0.0;
   size_t gpuMemoryBytes_ = 0;
@@ -1560,10 +1559,13 @@ public:
     unsigned int* dHistogram = nullptr;
     cudaEvent_t startEvent = nullptr;
     cudaEvent_t stopEvent = nullptr;
+    gpuMemoryBytes_ = 0;
 
     try {
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&dInput), expectedInput));
+      gpuMemoryBytes_ += expectedInput;
       CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&dHistogram), static_cast<size_t>(kVideoHistogramBinCount) * sizeof(unsigned int)));
+      gpuMemoryBytes_ += static_cast<size_t>(kVideoHistogramBinCount) * sizeof(unsigned int);
 
       CUDA_CHECK_THROW(cudaMemcpy(dInput, input_.data(), expectedInput, cudaMemcpyHostToDevice));
       CUDA_CHECK_THROW(cudaMemset(dHistogram, 0, static_cast<size_t>(kVideoHistogramBinCount) * sizeof(unsigned int)));
@@ -1621,6 +1623,7 @@ public:
     result.Set("gpuDurationMs", Napi::Number::New(Env(), gpuDurationMs_));
     result.Set("backendDurationMs", Napi::Number::New(Env(), backendDurationMs_));
     result.Set("timingSource", Napi::String::New(Env(), "gpu-timestamp"));
+    result.Set("memory", BuildMemoryMetrics(Env(), gpuMemoryBytes_, input_.size()));
     deferred_.Resolve(result);
   }
 
@@ -1633,8 +1636,11 @@ private:
   Napi::Promise::Deferred deferred_;
   std::vector<uint8_t> input_;
   std::vector<unsigned int> histogram_;
+  size_t gpuAllocatedBytes_ = 0;
+  size_t hostAllocatedBytes_ = 0;
   double gpuDurationMs_ = 0.0;
   double backendDurationMs_ = 0.0;
+  size_t gpuMemoryBytes_ = 0;
 };
 
 class CudaVideoUnloadWorker final : public Napi::AsyncWorker {
@@ -1758,7 +1764,7 @@ public:
     result.Set("gpuDurationMs", Napi::Number::New(Env(), gpuDurationMs_));
     result.Set("backendDurationMs", Napi::Number::New(Env(), backendDurationMs_));
     result.Set("timingSource", Napi::String::New(Env(), "gpu-timestamp"));
-    result.Set("gpuMemoryBytes", Napi::Number::New(Env(), static_cast<double>(gpuMemoryBytes_)));
+    result.Set("memory", BuildMemoryMetrics(Env(), gpuMemoryBytes_, shapes_.size() * sizeof(float)));
 
     deferred_.Resolve(result);
   }
@@ -1774,6 +1780,8 @@ private:
   int shapeCount_ = 0;
   int width_ = 0;
   int height_ = 0;
+  size_t gpuAllocatedBytes_ = 0;
+  size_t hostAllocatedBytes_ = 0;
   std::vector<uint8_t> output_;
   double gpuDurationMs_ = 0.0;
   double backendDurationMs_ = 0.0;

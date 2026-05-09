@@ -8,7 +8,7 @@ import {
   loadModelCuda,
   predictCnnCuda,
   predictMlpCuda,
-  type CudaMlpMemoryEstimate,
+  type CudaMemoryMetrics,
   unloadCnnModelCuda,
   unloadModelCuda,
 } from '../cuda/cudaBackend.js'
@@ -16,7 +16,7 @@ import {
   cnnLayout,
   loadCnnModelToWebGpu,
   predictWithWebGpuCnn,
-  type CnnMemoryEstimate,
+  type CnnMemoryMetrics,
   type LoadedWebGpuCnnModel,
   unloadWebGpuCnnModel,
 } from '../gpu/cnn-runner.js'
@@ -25,7 +25,7 @@ import {
   mlpLayout,
   predictWithWebGpuMlp,
   type LoadedWebGpuMlpModel,
-  type MlpMemoryEstimate,
+  type MlpMemoryMetrics,
   unloadWebGpuMlpModel,
 } from '../gpu/mlp-runner.js'
 
@@ -44,23 +44,19 @@ export interface AiBackendStatus {
   reason?: string
 }
 
-export interface AiSingleModelMemoryEstimate {
+export interface AiSingleModelmemory {
   hostAllocatedBytes: number
-  hostAllocatedMiB: number
   totalGpuAllocatedBytes: number
-  totalGpuAllocatedMiB: number
-  webgpu: MlpMemoryEstimate | CnnMemoryEstimate | null
-  cuda: CudaMlpMemoryEstimate | null
+  webgpu: MlpMemoryMetrics | CnnMemoryMetrics | null
+  cuda: CudaMemoryMetrics | null
 }
 
-export interface AiPipelineMemoryEstimate {
+export interface AiPipelinememory {
   hostAllocatedBytes: number
-  hostAllocatedMiB: number
   totalGpuAllocatedBytes: number
-  totalGpuAllocatedMiB: number
   models: {
-    mlp: AiSingleModelMemoryEstimate
-    cnn: AiSingleModelMemoryEstimate
+    mlp: AiSingleModelmemory
+    cnn: AiSingleModelmemory
   }
 }
 
@@ -71,7 +67,7 @@ export interface AiModelStatus {
     webgpu: AiBackendStatus
     cuda: AiBackendStatus
   }
-  memoryEstimate: AiSingleModelMemoryEstimate
+  memory: AiSingleModelmemory
 }
 
 export interface AiLoadResult {
@@ -81,7 +77,7 @@ export interface AiLoadResult {
     mlp: AiModelStatus
     cnn: AiModelStatus
   }
-  memoryEstimate: AiPipelineMemoryEstimate
+  memory: AiPipelinememory
 }
 
 export interface AiPredictResult {
@@ -95,7 +91,7 @@ export interface AiPredictResult {
 
 export interface AiCnnPredictResult extends AiPredictResult {
   predictionLabel: string
-  memoryEstimate: AiSingleModelMemoryEstimate
+  memory: AiSingleModelmemory
 }
 
 export interface AiUnloadResult {
@@ -105,7 +101,7 @@ export interface AiUnloadResult {
     mlp: AiModelStatus
     cnn: AiModelStatus
   }
-  memoryEstimate: AiPipelineMemoryEstimate
+  memory: AiPipelinememory
 }
 
 export interface AiStatusResult {
@@ -116,7 +112,7 @@ export interface AiStatusResult {
     mlp: AiModelStatus
     cnn: AiModelStatus
   }
-  memoryEstimate: AiPipelineMemoryEstimate
+  memory: AiPipelinememory
 }
 
 export class AiManagerError extends Error {
@@ -144,9 +140,6 @@ const CIFAR10_LABELS = [
   'truck',
 ] as const
 
-function toMiB(bytes: number): number {
-  return Math.round((bytes / (1024 * 1024)) * 1000) / 1000
-}
 
 function softmax(logits: Float32Array): number[] {
   let maxLogit = Number.NEGATIVE_INFINITY
@@ -192,14 +185,14 @@ export class AiManager {
 
   private mlpWebgpuModel: LoadedWebGpuMlpModel | null = null
   private mlpCudaReady = false
-  private mlpWebgpuMemory: MlpMemoryEstimate | null = null
-  private mlpCudaMemory: CudaMlpMemoryEstimate | null = null
+  private mlpWebgpuMemory: MlpMemoryMetrics | null = null
+  private mlpCudaMemory: CudaMemoryMetrics | null = null
   private mlpHostWeightsBytes = 0
 
   private cnnWebgpuModel: LoadedWebGpuCnnModel | null = null
   private cnnCudaReady = false
-  private cnnWebgpuMemory: CnnMemoryEstimate | null = null
-  private cnnCudaMemory: CudaMlpMemoryEstimate | null = null
+  private cnnWebgpuMemory: CnnMemoryMetrics | null = null
+  private cnnCudaMemory: CudaMemoryMetrics | null = null
   private cnnHostWeightsBytes = 0
 
   private cudaUnavailableReason: string | null = null
@@ -237,7 +230,7 @@ export class AiManager {
         mlp: this.buildModelStatus('mlp'),
         cnn: this.buildModelStatus('cnn'),
       },
-      memoryEstimate: this.buildPipelineMemoryEstimate(),
+      memory: this.buildPipelinememory(),
     }
   }
 
@@ -276,7 +269,7 @@ export class AiManager {
     return backends
   }
 
-  private buildSingleModelMemoryEstimate(model: AiModel): AiSingleModelMemoryEstimate {
+  private buildSingleModelmemory(model: AiModel): AiSingleModelmemory {
     const hostAllocatedBytes = model === 'mlp' ? this.mlpHostWeightsBytes : this.cnnHostWeightsBytes
     const webgpu = model === 'mlp' ? this.mlpWebgpuMemory : this.cnnWebgpuMemory
     const cuda = model === 'mlp' ? this.mlpCudaMemory : this.cnnCudaMemory
@@ -284,25 +277,21 @@ export class AiManager {
 
     return {
       hostAllocatedBytes,
-      hostAllocatedMiB: toMiB(hostAllocatedBytes),
       totalGpuAllocatedBytes,
-      totalGpuAllocatedMiB: toMiB(totalGpuAllocatedBytes),
       webgpu,
       cuda,
     }
   }
 
-  private buildPipelineMemoryEstimate(): AiPipelineMemoryEstimate {
-    const mlp = this.buildSingleModelMemoryEstimate('mlp')
-    const cnn = this.buildSingleModelMemoryEstimate('cnn')
+  private buildPipelinememory(): AiPipelinememory {
+    const mlp = this.buildSingleModelmemory('mlp')
+    const cnn = this.buildSingleModelmemory('cnn')
     const hostAllocatedBytes = mlp.hostAllocatedBytes + cnn.hostAllocatedBytes
     const totalGpuAllocatedBytes = mlp.totalGpuAllocatedBytes + cnn.totalGpuAllocatedBytes
 
     return {
       hostAllocatedBytes,
-      hostAllocatedMiB: toMiB(hostAllocatedBytes),
       totalGpuAllocatedBytes,
-      totalGpuAllocatedMiB: toMiB(totalGpuAllocatedBytes),
       models: {
         mlp,
         cnn,
@@ -337,7 +326,7 @@ export class AiManager {
       loaded: loadedBackends.length > 0,
       loadedBackends,
       backends: this.buildBackendStatuses(model),
-      memoryEstimate: this.buildSingleModelMemoryEstimate(model),
+      memory: this.buildSingleModelmemory(model),
     }
   }
 
@@ -393,11 +382,11 @@ export class AiManager {
             if (model === 'mlp') {
               const loaded = await loadMlpModelToWebGpu(weights)
               this.mlpWebgpuModel = loaded
-              this.mlpWebgpuMemory = loaded.memoryEstimate
+              this.mlpWebgpuMemory = loaded.memory
             } else {
               const loaded = await loadCnnModelToWebGpu(weights)
               this.cnnWebgpuModel = loaded
-              this.cnnWebgpuMemory = loaded.memoryEstimate
+              this.cnnWebgpuMemory = loaded.memory
             }
           } catch (error) {
             loadErrors.push(`${model}: ${error instanceof Error ? error.message : 'WebGPU load failed.'}`)
@@ -414,11 +403,11 @@ export class AiManager {
               if (model === 'mlp') {
                 const loaded = await loadModelCuda(weights)
                 this.mlpCudaReady = true
-                this.mlpCudaMemory = loaded.memoryEstimate
+                this.mlpCudaMemory = loaded.memory
               } else {
                 const loaded = await loadCnnModelCuda(weights)
                 this.cnnCudaReady = true
-                this.cnnCudaMemory = loaded.memoryEstimate
+                this.cnnCudaMemory = loaded.memory
               }
               this.cudaUnavailableReason = null
             } catch (error) {
@@ -449,7 +438,7 @@ export class AiManager {
           mlp: this.buildModelStatus('mlp'),
           cnn: this.buildModelStatus('cnn'),
         },
-        memoryEstimate: this.buildPipelineMemoryEstimate(),
+        memory: this.buildPipelinememory(),
       }
     } catch (error) {
       this.state = 'idle'
@@ -528,7 +517,7 @@ export class AiManager {
         backendDurationMs: Number(backendResult.backendDurationMs.toFixed(3)),
         serverDurationMs: Number(serverDurationMs.toFixed(3)),
         timingSource: backendResult.timingSource,
-        memoryEstimate: this.buildSingleModelMemoryEstimate('cnn'),
+        memory: this.buildSingleModelmemory('cnn'),
       }
     } catch (error) {
       throw new AiManagerError(error instanceof Error ? error.message : 'CNN prediction failed.', 'ai_predict_failed', 500)
@@ -593,7 +582,7 @@ export class AiManager {
           mlp: this.buildModelStatus('mlp'),
           cnn: this.buildModelStatus('cnn'),
         },
-        memoryEstimate: this.buildPipelineMemoryEstimate(),
+        memory: this.buildPipelinememory(),
       }
     } catch (error) {
       this.state = 'idle'

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { getGpuDevice } from './device.js'
-import { RENDER_HEIGHT, RENDER_WIDTH, SHAPE_FLOATS, getShapeBufferBytes } from '../render/scene.js'
+import { RENDER_HEIGHT, RENDER_WIDTH, SHAPE_FLOATS } from '../render/scene.js'
 
 const renderShaderCode = readFileSync(new URL('./shaders/renderSceneRender.wgsl', import.meta.url), 'utf8')
 const computeShaderCode = readFileSync(new URL('./shaders/renderSceneCompute.wgsl', import.meta.url), 'utf8')
@@ -138,6 +138,8 @@ export async function renderSceneWebGpuRender(
   const pipeline = getRenderPipeline(device)
   const quadBuffer = getQuadBuffer(device)
 
+  const cpuStart = performance.now()
+
   const shapeBuffer = device.createBuffer({
     label: 'render-shapes',
     size: shapes.byteLength,
@@ -154,6 +156,7 @@ export async function renderSceneWebGpuRender(
   if (bytesPerRow % 256 !== 0) {
     throw new Error(`bytesPerRow must be 256-byte aligned. Got ${bytesPerRow}.`)
   }
+
   const outputBytes = bytesPerRow * height
 
   const colorTexture = device.createTexture({
@@ -241,7 +244,6 @@ export async function renderSceneWebGpuRender(
       encoder.copyBufferToBuffer(queryResolve, 0, queryReadback, 0, 16)
     }
 
-    const cpuStart = performance.now()
     device.queue.submit([encoder.finish()])
 
     const waits: Promise<void>[] = [readback.mapAsync(GPUMapMode.READ)]
@@ -267,12 +269,11 @@ export async function renderSceneWebGpuRender(
     }
 
     const gpuMemoryBytes =
-      getShapeBufferBytes(count) +
-      16 +
-      QUAD_VERTICES.byteLength +
-      outputBytes +
-      width * height * 4 +
-      width * height * 4
+      shapeBuffer.size +
+      paramsBuffer.size +
+      readback.size +
+      (queryResolve?.size ?? 0) +
+      (queryReadback?.size ?? 0)
 
     return {
       rgba: output,
@@ -304,6 +305,8 @@ export async function renderSceneWebGpuCompute(
   validateShapes(shapes, count)
   const device = await getGpuDevice()
   const pipeline = getComputePipeline(device)
+
+  const cpuStart = performance.now()
 
   const shapeBuffer = device.createBuffer({
     label: 'render-compute-shapes',
@@ -377,7 +380,6 @@ export async function renderSceneWebGpuCompute(
       encoder.copyBufferToBuffer(queryResolve, 0, queryReadback, 0, 16)
     }
 
-    const cpuStart = performance.now()
     device.queue.submit([encoder.finish()])
 
     const waits: Promise<void>[] = [readback.mapAsync(GPUMapMode.READ)]
@@ -402,7 +404,13 @@ export async function renderSceneWebGpuCompute(
       }
     }
 
-    const gpuMemoryBytes = getShapeBufferBytes(count) + 16 + outputBytes + outputBytes
+    const gpuMemoryBytes =
+      shapeBuffer.size +
+      paramsBuffer.size +
+      outputBuffer.size +
+      readback.size +
+      (queryResolve?.size ?? 0) +
+      (queryReadback?.size ?? 0)
 
     return {
       rgba: output,

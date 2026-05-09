@@ -13,15 +13,17 @@ type NativeCudaResult = {
   multiplyDurationMs: number
   backendDurationMs: number
   timingSource: 'gpu-timestamp'
+  memory: {
+    gpuAllocatedBytes: number
+    hostAllocatedBytes: number
+  }
 }
 
 type NativeMlpLoadResult = {
   status: 'loaded'
-  memoryEstimate: {
+  memory: {
     gpuAllocatedBytes: number
-    gpuAllocatedMiB: number
     hostAllocatedBytes: number
-    hostAllocatedMiB: number
   }
 }
 
@@ -37,11 +39,9 @@ type NativeCnnPredictResult = {
   gpuDurationMs: number
   backendDurationMs: number
   timingSource: 'gpu-timestamp'
-  memoryEstimate: {
+  memory: {
     gpuAllocatedBytes: number
-    gpuAllocatedMiB: number
     hostAllocatedBytes: number
-    hostAllocatedMiB: number
   }
 }
 
@@ -51,7 +51,7 @@ type NativeMlpUnloadResult = {
 
 type NativeVideoInitResult = {
   status: 'ready'
-  gpuMemoryBytes: number
+  memory: CudaMemoryMetrics
 }
 
 type NativeVideoFrameResult = {
@@ -59,7 +59,7 @@ type NativeVideoFrameResult = {
   gpuDurationMs: number
   backendDurationMs: number
   timingSource: 'gpu-timestamp'
-  gpuMemoryBytes: number
+  memory: CudaMemoryMetrics
 }
 
 type NativeVideoHistogramResult = {
@@ -67,6 +67,7 @@ type NativeVideoHistogramResult = {
   gpuDurationMs: number
   backendDurationMs: number
   timingSource: 'gpu-timestamp'
+  memory: CudaMemoryMetrics
 }
 
 type NativeRenderSceneResult = {
@@ -74,7 +75,7 @@ type NativeRenderSceneResult = {
   gpuDurationMs: number
   backendDurationMs: number
   timingSource: 'gpu-timestamp'
-  gpuMemoryBytes: number
+  memory: CudaMemoryMetrics
 }
 
 type NativeGaussianBlurResult = {
@@ -82,11 +83,9 @@ type NativeGaussianBlurResult = {
   gpuDurationMs: number
   backendDurationMs: number
   timingSource: 'gpu-timestamp'
-  memoryEstimate: {
+  memory: {
     gpuAllocatedBytes: number
-    gpuAllocatedMiB: number
     hostAllocatedBytes: number
-    hostAllocatedMiB: number
   }
 }
 
@@ -124,6 +123,7 @@ export interface MultiplyMatrixCudaResult {
   multiplyDurationMs: number
   backendDurationMs: number
   timingSource: 'gpu-timestamp'
+  memory: CudaMemoryMetrics
 }
 
 export interface CudaRuntimeState {
@@ -131,16 +131,14 @@ export interface CudaRuntimeState {
   reason: string
 }
 
-export interface CudaMlpMemoryEstimate {
+export interface CudaMemoryMetrics {
   gpuAllocatedBytes: number
-  gpuAllocatedMiB: number
   hostAllocatedBytes: number
-  hostAllocatedMiB: number
 }
 
 export interface CudaMlpLoadResult {
   status: 'loaded'
-  memoryEstimate: CudaMlpMemoryEstimate
+  memory: CudaMemoryMetrics
 }
 
 export interface CudaMlpPredictResult {
@@ -155,7 +153,7 @@ export interface CudaCnnPredictResult {
   gpuDurationMs: number
   backendDurationMs: number
   timingSource: 'gpu-timestamp'
-  memoryEstimate: CudaMlpMemoryEstimate
+  memory: CudaMemoryMetrics
 }
 
 export interface CudaMlpUnloadResult {
@@ -171,7 +169,7 @@ export interface CudaVideoInitParams {
 
 export interface CudaVideoInitResult {
   status: 'ready'
-  gpuMemoryBytes: number
+  memory: CudaMemoryMetrics
 }
 
 export interface CudaVideoFrameResult {
@@ -179,7 +177,7 @@ export interface CudaVideoFrameResult {
   gpuDurationMs: number
   backendDurationMs: number
   timingSource: 'gpu-timestamp'
-  gpuMemoryBytes: number
+  memory: CudaMemoryMetrics
 }
 
 export interface CudaVideoHistogramResult {
@@ -187,6 +185,7 @@ export interface CudaVideoHistogramResult {
   gpuDurationMs: number
   backendDurationMs: number
   timingSource: 'gpu-timestamp'
+  memory: CudaMemoryMetrics
 }
 
 export interface CudaRenderSceneResult {
@@ -194,7 +193,7 @@ export interface CudaRenderSceneResult {
   gpuDurationMs: number
   backendDurationMs: number
   timingSource: 'gpu-timestamp'
-  gpuMemoryBytes: number
+  memory: CudaMemoryMetrics
   width: number
   height: number
 }
@@ -211,7 +210,7 @@ export interface CudaGaussianBlurResult {
   gpuDurationMs: number
   backendDurationMs: number
   timingSource: 'gpu-timestamp'
-  memoryEstimate: CudaMlpMemoryEstimate
+  memory: CudaMemoryMetrics
 }
 
 let cachedAddon: NativeCudaAddon | null = null
@@ -365,6 +364,7 @@ export async function multiplyMatrixCuda(params: MultiplyMatrixCudaParams): Prom
     multiplyDurationMs: result.multiplyDurationMs,
     backendDurationMs: result.backendDurationMs,
     timingSource: result.timingSource,
+    memory: result.memory,
   }
 }
 
@@ -373,7 +373,7 @@ export async function loadModelCuda(weights: Float32Array): Promise<CudaMlpLoadR
   const result = await addon.loadModel({ weights })
   return {
     status: result.status,
-    memoryEstimate: result.memoryEstimate,
+    memory: result.memory,
   }
 }
 
@@ -401,7 +401,7 @@ export async function loadCnnModelCuda(weights: Float32Array): Promise<CudaMlpLo
   const result = await addon.loadCnnModel({ weights })
   return {
     status: result.status,
-    memoryEstimate: result.memoryEstimate,
+    memory: result.memory,
   }
 }
 
@@ -413,7 +413,7 @@ export async function predictCnnCuda(input: Float32Array): Promise<CudaCnnPredic
     gpuDurationMs: result.gpuDurationMs,
     backendDurationMs: result.backendDurationMs,
     timingSource: result.timingSource,
-    memoryEstimate: result.memoryEstimate,
+    memory: result.memory,
   }
 }
 
@@ -430,7 +430,7 @@ export async function initVideoPipelineCuda(params: CudaVideoInitParams): Promis
   const result = await addon.initVideoPipeline({ ...params })
   return {
     status: result.status,
-    gpuMemoryBytes: result.gpuMemoryBytes,
+    memory: result.memory,
   }
 }
 
@@ -442,7 +442,7 @@ export async function processVideoFrameCuda(input: Uint8Array, quality: VideoQua
     gpuDurationMs: result.gpuDurationMs,
     backendDurationMs: result.backendDurationMs,
     timingSource: result.timingSource,
-    gpuMemoryBytes: result.gpuMemoryBytes,
+    memory: result.memory,
   }
 }
 
@@ -462,6 +462,7 @@ export async function computeHistogramCuda(input: Uint8Array): Promise<CudaVideo
     gpuDurationMs: result.gpuDurationMs,
     backendDurationMs: result.backendDurationMs,
     timingSource: result.timingSource,
+    memory: result.memory,
   }
 }
 
@@ -473,7 +474,7 @@ export async function renderSceneCuda(shapes: Float32Array, count: number, width
     gpuDurationMs: result.gpuDurationMs,
     backendDurationMs: result.backendDurationMs,
     timingSource: result.timingSource,
-    gpuMemoryBytes: result.gpuMemoryBytes,
+    memory: result.memory,
     width,
     height,
   }
@@ -493,7 +494,7 @@ export async function gaussianBlurCuda(params: CudaGaussianBlurParams): Promise<
     gpuDurationMs: result.gpuDurationMs,
     backendDurationMs: result.backendDurationMs,
     timingSource: result.timingSource,
-    memoryEstimate: result.memoryEstimate,
+    memory: result.memory,
   }
 }
 

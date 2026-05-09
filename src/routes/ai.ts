@@ -25,31 +25,13 @@ const backendStatusSchema = {
   },
 } as const
 
-const memoryNodeSchema = {
+const memorySchema = {
   type: 'object',
+  description: 'Ujednolicony raport pamięci dla żądania obliczeniowego.',
   properties: {
-    hostAllocatedBytes: { type: 'number' },
-    hostAllocatedMiB: { type: 'number' },
-    totalGpuAllocatedBytes: { type: 'number' },
-    totalGpuAllocatedMiB: { type: 'number' },
-    webgpu: {
-      type: ['object', 'null'],
-      properties: {
-        gpuAllocatedBytes: { type: 'number' },
-        gpuAllocatedMiB: { type: 'number' },
-        hostAllocatedBytes: { type: 'number' },
-        hostAllocatedMiB: { type: 'number' },
-      },
-    },
-    cuda: {
-      type: ['object', 'null'],
-      properties: {
-        gpuAllocatedBytes: { type: 'number' },
-        gpuAllocatedMiB: { type: 'number' },
-        hostAllocatedBytes: { type: 'number' },
-        hostAllocatedMiB: { type: 'number' },
-      },
-    },
+    gpuBytes: { type: ['number', 'null'] },
+    hostBytes: { type: ['number', 'null'] },
+    serverRssBytes: { type: 'number' },
   },
 } as const
 
@@ -68,7 +50,6 @@ const modelStatusSchema = {
         cuda: backendStatusSchema,
       },
     },
-    memoryEstimate: memoryNodeSchema,
   },
 } as const
 
@@ -99,22 +80,7 @@ export async function ai(server: FastifyInstance) {
                   cnn: modelStatusSchema,
                 },
               },
-              memoryEstimate: {
-                type: 'object',
-                properties: {
-                  hostAllocatedBytes: { type: 'number' },
-                  hostAllocatedMiB: { type: 'number' },
-                  totalGpuAllocatedBytes: { type: 'number' },
-                  totalGpuAllocatedMiB: { type: 'number' },
-                  models: {
-                    type: 'object',
-                    properties: {
-                      mlp: memoryNodeSchema,
-                      cnn: memoryNodeSchema,
-                    },
-                  },
-                },
-              },
+              memory: memorySchema,
             },
           },
           400: aiErrorSchema,
@@ -159,22 +125,7 @@ export async function ai(server: FastifyInstance) {
                   cnn: modelStatusSchema,
                 },
               },
-              memoryEstimate: {
-                type: 'object',
-                properties: {
-                  hostAllocatedBytes: { type: 'number' },
-                  hostAllocatedMiB: { type: 'number' },
-                  totalGpuAllocatedBytes: { type: 'number' },
-                  totalGpuAllocatedMiB: { type: 'number' },
-                  models: {
-                    type: 'object',
-                    properties: {
-                      mlp: memoryNodeSchema,
-                      cnn: memoryNodeSchema,
-                    },
-                  },
-                },
-              },
+              memory: memorySchema,
             },
           },
           400: aiErrorSchema,
@@ -227,6 +178,7 @@ export async function ai(server: FastifyInstance) {
               backendDurationMs: { type: 'number' },
               serverDurationMs: { type: 'number' },
               timingSource: { type: 'string', enum: ['gpu-timestamp', 'cpu-clock'] },
+              memory: memorySchema,
             },
           },
           400: aiErrorSchema,
@@ -280,7 +232,7 @@ export async function ai(server: FastifyInstance) {
               backendDurationMs: { type: 'number' },
               serverDurationMs: { type: 'number' },
               timingSource: { type: 'string', enum: ['gpu-timestamp', 'cpu-clock'] },
-              memoryEstimate: memoryNodeSchema,
+              memory: memorySchema,
             },
           },
           400: aiErrorSchema,
@@ -322,22 +274,7 @@ export async function ai(server: FastifyInstance) {
                   cnn: modelStatusSchema,
                 },
               },
-              memoryEstimate: {
-                type: 'object',
-                properties: {
-                  hostAllocatedBytes: { type: 'number' },
-                  hostAllocatedMiB: { type: 'number' },
-                  totalGpuAllocatedBytes: { type: 'number' },
-                  totalGpuAllocatedMiB: { type: 'number' },
-                  models: {
-                    type: 'object',
-                    properties: {
-                      mlp: memoryNodeSchema,
-                      cnn: memoryNodeSchema,
-                    },
-                  },
-                },
-              },
+              memory: memorySchema,
             },
           },
           400: aiErrorSchema,

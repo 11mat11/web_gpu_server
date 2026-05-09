@@ -185,7 +185,7 @@ export async function gaussianBlurWebGpu(
   if (bufferBytes > device.limits.maxStorageBufferBindingSize) {
     throw new Error('Image buffer size exceeds GPU limits.')
   }
-
+  const cpuStartMs = performance.now()
   const sizeData = new Uint32Array([width, height, 0, 0])
   const sizeBuffer = device.createBuffer({
     label: 'gaussian-size',
@@ -320,7 +320,6 @@ export async function gaussianBlurWebGpu(
       encoder.copyBufferToBuffer(queryResolveBuffer, 0, queryReadbackBuffer, 0, 32)
     }
 
-    const cpuStartMs = performance.now()
     device.queue.submit([encoder.finish()])
 
     const waits: Promise<void>[] = []

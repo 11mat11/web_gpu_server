@@ -8,6 +8,14 @@ import { getCudaRuntimeState, renderSceneCuda } from '../cuda/cudaBackend.js'
 const BackendSchema = z.enum(['webgpu-render', 'webgpu-compute', 'cuda'])
   .describe('Backend renderowania sceny SDF (render pipeline vs compute vs CUDA).')
   .example('webgpu-render')
+const MemorySchema = z
+  .object({
+    gpuBytes: z.number().nullable().describe('Suma bajtów GPUBuffer utworzonych w żądaniu.').example(67108864),
+    hostBytes: z.number().nullable().describe('Suma bajtów buforów Buffer/ArrayBuffer utworzonych w żądaniu.').example(33554432),
+    serverRssBytes: z.number().describe('process.memoryUsage().rss po zakończeniu obliczeń.').example(123456789),
+  })
+  .describe('Ujednolicony raport pamięci dla żądania obliczeniowego.')
+  .example({ gpuBytes: 67108864, hostBytes: 33554432, serverRssBytes: 123456789 })
 
 const RenderBodySchema = z
   .object({
@@ -72,8 +80,15 @@ export async function renderRoute(server: FastifyInstance) {
               backendDurationMs: { type: 'number' },
               serverDurationMs: { type: 'number' },
               timingSource: { type: 'string', enum: ['gpu-timestamp', 'cpu-clock'] },
-              gpuMemoryBytes: { type: 'number' },
-              serverMemoryBytes: { type: 'number' },
+              memory: {
+                type: 'object',
+                description: 'Ujednolicony raport pamięci dla żądania obliczeniowego.',
+                properties: {
+                  gpuBytes: { type: ['number', 'null'] },
+                  hostBytes: { type: ['number', 'null'] },
+                  serverRssBytes: { type: 'number' },
+                },
+              },
             },
           },
           400: {
@@ -102,7 +117,7 @@ export async function renderRoute(server: FastifyInstance) {
         const { seed, count, backend } = parsed.data
         const shapes = generateScene(seed, count)
 
-        let result: { rgba: Buffer; width: number; height: number; gpuDurationMs: number; backendDurationMs: number; timingSource: 'gpu-timestamp' | 'cpu-clock'; gpuMemoryBytes: number }
+        let result: any
 
         if (backend === 'webgpu-render') {
           result = await renderSceneWebGpuRender(shapes, count)
@@ -120,7 +135,11 @@ export async function renderRoute(server: FastifyInstance) {
         }
 
         const serverDurationMs = performance.now() - startedAt
-        const serverMemoryBytes = process.memoryUsage().rss
+        const memory: z.infer<typeof MemorySchema> = {
+          gpuBytes: 'memory' in result ? result.memory.gpuAllocatedBytes : result.gpuMemoryBytes,
+          hostBytes: shapes.byteLength + result.rgba.byteLength,
+          serverRssBytes: process.memoryUsage().rss,
+        }
 
         return reply.send({
           backend,
@@ -132,8 +151,7 @@ export async function renderRoute(server: FastifyInstance) {
           backendDurationMs: Number(result.backendDurationMs.toFixed(3)),
           serverDurationMs: Number(serverDurationMs.toFixed(3)),
           timingSource: result.timingSource,
-          gpuMemoryBytes: result.gpuMemoryBytes,
-          serverMemoryBytes,
+          memory,
         })
       } catch (error) {
         return reply.code(500).send({

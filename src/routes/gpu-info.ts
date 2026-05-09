@@ -100,6 +100,14 @@ export async function gpuInfoRoute(server: FastifyInstance) {
                 inputB:      { type: 'array', items: { type: 'number' } },
                 result:      { type: 'array', items: { type: 'number' } },
                 message:     { type: 'string' },
+                memory: {
+                  type: 'object',
+                  properties: {
+                    gpuBytes: { type: ['number', 'null'] },
+                    hostBytes: { type: ['number', 'null'] },
+                    serverRssBytes: { type: 'number' },
+                  },
+                },
               },
             },
             400: errorResponseSchema,
@@ -112,6 +120,14 @@ export async function gpuInfoRoute(server: FastifyInstance) {
                 inputB:     { type: 'array', items: { type: 'number' } },
                 result:     { type: 'array', items: { type: 'number' } },
                 message:    { type: 'string' },
+                memory: {
+                  type: 'object',
+                  properties: {
+                    gpuBytes: { type: ['number', 'null'] },
+                    hostBytes: { type: ['number', 'null'] },
+                    serverRssBytes: { type: 'number' },
+                  },
+                },
               },
             },
           },
@@ -191,6 +207,11 @@ export async function gpuInfoRoute(server: FastifyInstance) {
           const durationMs = Number((performance.now() - start).toFixed(2))
           const expected = inputA.map((v, i) => v + inputB[i])
           const ok = resultArr.every((v, i) => Math.abs(v - expected[i]) < 0.001)
+          const memory = {
+            gpuBytes: byteSize * 4,
+            hostBytes: byteSize,
+            serverRssBytes: process.memoryUsage().rss,
+          }
 
           return reply.send({
             ok,
@@ -201,6 +222,7 @@ export async function gpuInfoRoute(server: FastifyInstance) {
             message: ok
                 ? `✅ GPU compute works correctly in ${durationMs} ms`
                 : '❌ Result mismatch — GPU compute may be broken',
+            memory,
           })
         } catch (err) {
           const durationMs = Number((performance.now() - start).toFixed(2))
@@ -212,6 +234,11 @@ export async function gpuInfoRoute(server: FastifyInstance) {
             inputB: [],
             result: [],
             message: `GPU test failed: ${String(err)}`,
+            memory: {
+              gpuBytes: null,
+              hostBytes: null,
+              serverRssBytes: process.memoryUsage().rss,
+            },
           })
         }
       },

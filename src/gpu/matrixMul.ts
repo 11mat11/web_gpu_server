@@ -31,6 +31,7 @@ export interface MatrixGpuTimings {
 
 export interface MatrixMulWebGpuResult extends MatrixGpuTimings {
   output: Float32Array | null
+  gpuMemoryBytes: number
 }
 
 const matrixMulPipelineCache = new WeakMap<GPUDevice, GPUComputePipeline>()
@@ -182,7 +183,7 @@ export async function multiplySquareMatricesWebGpu(
   if (outputByteLength > device.limits.maxStorageBufferBindingSize) {
     throw new Error('Matrix buffer size exceeds device limits.')
   }
-
+  const cpuStartMs = performance.now()
   const dims = createDimsData(size)
   const dimsBuffer = device.createBuffer({
     label: 'matrix-dims',
@@ -235,6 +236,15 @@ export async function multiplySquareMatricesWebGpu(
       })
     : null
 
+  const gpuMemoryBytes =
+    dimsBuffer.size +
+    matrixABuffer.size +
+    matrixBBuffer.size +
+    matrixCBuffer.size +
+    (readbackBuffer?.size ?? 0) +
+    (queryResolveBuffer?.size ?? 0) +
+    (queryReadbackBuffer?.size ?? 0)
+
   try {
     device.queue.writeBuffer(dimsBuffer, 0, dims)
     device.queue.writeBuffer(matrixABuffer, 0, matrixA)
@@ -281,7 +291,6 @@ export async function multiplySquareMatricesWebGpu(
       encoder.copyBufferToBuffer(queryResolveBuffer, 0, queryReadbackBuffer, 0, 16)
     }
 
-    const cpuStartMs = performance.now()
     device.queue.submit([encoder.finish()])
 
     const pendingMaps: Promise<void>[] = []
@@ -324,6 +333,7 @@ export async function multiplySquareMatricesWebGpu(
       multiplyDurationMs,
       backendDurationMs: multiplyDurationMs,
       timingSource,
+      gpuMemoryBytes,
     }
   } finally {
     dimsBuffer.destroy()
@@ -354,7 +364,7 @@ export async function multiplyRandomSquareMatricesWebGpu(
   if (outputByteLength > device.limits.maxStorageBufferBindingSize) {
     throw new Error('Matrix buffer size exceeds device limits.')
   }
-
+  const cpuPipelineStartMs = performance.now()
   const low = Math.min(minValue, maxValue)
   const high = Math.max(minValue, maxValue)
   const seed = getSeed(options.seed)
@@ -421,6 +431,16 @@ export async function multiplyRandomSquareMatricesWebGpu(
         usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
       })
     : null
+
+  const gpuMemoryBytes =
+    randomParamsBuffer.size +
+    dimsBuffer.size +
+    matrixABuffer.size +
+    matrixBBuffer.size +
+    matrixCBuffer.size +
+    (readbackBuffer?.size ?? 0) +
+    (queryResolveBuffer?.size ?? 0) +
+    (queryReadbackBuffer?.size ?? 0)
 
   try {
     device.queue.writeBuffer(randomParamsBuffer, 0, randomParams)
@@ -493,7 +513,6 @@ export async function multiplyRandomSquareMatricesWebGpu(
       encoder.copyBufferToBuffer(queryResolveBuffer, 0, queryReadbackBuffer, 0, 32)
     }
 
-    const cpuPipelineStartMs = performance.now()
     device.queue.submit([encoder.finish()])
 
     const pendingMaps: Promise<void>[] = []
@@ -541,6 +560,7 @@ export async function multiplyRandomSquareMatricesWebGpu(
       multiplyDurationMs,
       backendDurationMs,
       timingSource,
+      gpuMemoryBytes,
     }
   } finally {
     randomParamsBuffer.destroy()

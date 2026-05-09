@@ -54,11 +54,9 @@ const TOTAL_TIMESTAMP_BYTES = TIMESTAMP_COUNT * 8
 
 type TimingSource = 'gpu-timestamp' | 'cpu-clock'
 
-export interface CnnMemoryEstimate {
+export interface CnnMemoryMetrics {
   gpuAllocatedBytes: number
-  gpuAllocatedMiB: number
   hostAllocatedBytes: number
-  hostAllocatedMiB: number
 }
 
 export interface LoadedWebGpuCnnModel {
@@ -86,7 +84,7 @@ export interface LoadedWebGpuCnnModel {
   pool4Out: GPUBuffer
   dense1Out: GPUBuffer
   output: GPUBuffer
-  memoryEstimate: CnnMemoryEstimate
+  memory: CnnMemoryMetrics
 }
 
 export interface WebGpuCnnPredictResult {
@@ -94,7 +92,8 @@ export interface WebGpuCnnPredictResult {
   gpuDurationMs: number
   backendDurationMs: number
   timingSource: TimingSource
-  memoryEstimate: CnnMemoryEstimate
+  memory: CnnMemoryMetrics
+  gpuMemoryBytes: number
 }
 
 interface PipelineSet {
@@ -105,10 +104,6 @@ interface PipelineSet {
 
 const shaderSource = readFileSync(new URL('./shaders/cnn.wgsl', import.meta.url), 'utf8')
 const pipelineCache = new WeakMap<GPUDevice, PipelineSet>()
-
-function toMiB(bytes: number): number {
-  return Math.round((bytes / (1024 * 1024)) * 1000) / 1000
-}
 
 function readDurationMsFromRaw(start: bigint, end: bigint): number | null {
   const deltaTicks = end >= start ? end - start : (1n << 64n) - start + end
@@ -313,11 +308,9 @@ export async function loadCnnModelToWebGpu(weights: Float32Array): Promise<Loade
       pool4Out,
       dense1Out,
       output,
-      memoryEstimate: {
+      memory: {
         gpuAllocatedBytes,
-        gpuAllocatedMiB: toMiB(gpuAllocatedBytes),
         hostAllocatedBytes: weights.byteLength,
-        hostAllocatedMiB: toMiB(weights.byteLength),
       },
     }
   } catch (error) {
@@ -339,7 +332,7 @@ export async function predictWithWebGpuCnn(
   if (input.length !== expectedInput) {
     throw new Error(`Invalid input length. Expected ${expectedInput}.`)
   }
-
+  const cpuStart = performance.now()
   const pipelines = getPipelines(model.device)
   const device = model.device
 
@@ -582,7 +575,6 @@ export async function predictWithWebGpuCnn(
       encoder.copyBufferToBuffer(queryResolve, 0, queryReadback, 0, TOTAL_TIMESTAMP_BYTES)
     }
 
-    const cpuStart = performance.now()
     device.queue.submit([encoder.finish()])
 
     const waitTasks: Promise<void>[] = [
@@ -631,7 +623,21 @@ export async function predictWithWebGpuCnn(
       gpuDurationMs,
       backendDurationMs: cpuDurationMs,
       timingSource,
-      memoryEstimate: model.memoryEstimate,
+      memory: model.memory,
+      gpuMemoryBytes:
+        conv1Params.size +
+        pool1Params.size +
+        conv2Params.size +
+        pool2Params.size +
+        conv3Params.size +
+        pool3Params.size +
+        conv4Params.size +
+        pool4Params.size +
+        dense1Params.size +
+        dense2Params.size +
+        readback.size +
+        (queryResolve?.size ?? 0) +
+        (queryReadback?.size ?? 0),
     }
   } finally {
     conv1Params.destroy()

@@ -21,11 +21,9 @@ const shaderSource = readFileSync(new URL('./shaders/mlp.wgsl', import.meta.url)
 
 type TimingSource = 'gpu-timestamp' | 'cpu-clock'
 
-export interface MlpMemoryEstimate {
+export interface MlpMemoryMetrics {
   gpuAllocatedBytes: number
-  gpuAllocatedMiB: number
   hostAllocatedBytes: number
-  hostAllocatedMiB: number
 }
 
 export interface LoadedWebGpuMlpModel {
@@ -40,7 +38,7 @@ export interface LoadedWebGpuMlpModel {
   hidden1Buffer: GPUBuffer
   hidden2Buffer: GPUBuffer
   outputBuffer: GPUBuffer
-  memoryEstimate: MlpMemoryEstimate
+  memory: MlpMemoryMetrics
 }
 
 export interface WebGpuMlpPredictResult {
@@ -48,13 +46,10 @@ export interface WebGpuMlpPredictResult {
   gpuDurationMs: number
   backendDurationMs: number
   timingSource: TimingSource
+  gpuMemoryBytes: number
 }
 
 const pipelineCache = new WeakMap<GPUDevice, GPUComputePipeline>()
-
-function toMiB(bytes: number): number {
-  return Math.round((bytes / (1024 * 1024)) * 1000) / 1000
-}
 
 function getMlpPipeline(device: GPUDevice): GPUComputePipeline {
   const cached = pipelineCache.get(device)
@@ -183,11 +178,9 @@ export async function loadMlpModelToWebGpu(weights: Float32Array): Promise<Loade
       hidden1Buffer,
       hidden2Buffer,
       outputBuffer,
-      memoryEstimate: {
+      memory: {
         gpuAllocatedBytes,
-        gpuAllocatedMiB: toMiB(gpuAllocatedBytes),
         hostAllocatedBytes: weights.byteLength,
-        hostAllocatedMiB: toMiB(weights.byteLength),
       },
     }
   } catch (error) {
@@ -212,7 +205,7 @@ export async function predictWithWebGpuMlp(
   if (input.length !== MLP_INPUT_SIZE) {
     throw new Error(`Invalid input length. Expected ${MLP_INPUT_SIZE}.`)
   }
-
+  const cpuStart = performance.now()
   const pipeline = getMlpPipeline(model.device)
   const device = model.device
   const outputBytes = MLP_OUTPUT_SIZE * Float32Array.BYTES_PER_ELEMENT
@@ -368,7 +361,6 @@ export async function predictWithWebGpuMlp(
       encoder.copyBufferToBuffer(queryResolveBuffer, 0, queryReadbackBuffer, 0, TOTAL_TIMESTAMP_BYTES)
     }
 
-    const cpuStart = performance.now()
     device.queue.submit([encoder.finish()])
 
     const waitTasks: Promise<void>[] = [
@@ -410,6 +402,13 @@ export async function predictWithWebGpuMlp(
       gpuDurationMs,
       backendDurationMs: cpuDurationMs,
       timingSource,
+      gpuMemoryBytes:
+        params1Buffer.size +
+        params2Buffer.size +
+        params3Buffer.size +
+        logitsReadbackBuffer.size +
+        (queryResolveBuffer?.size ?? 0) +
+        (queryReadbackBuffer?.size ?? 0),
     }
   } finally {
     params1Buffer.destroy()

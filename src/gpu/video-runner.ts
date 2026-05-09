@@ -30,6 +30,7 @@ export interface VideoRunResult {
   gpuDurationMs: number
   backendDurationMs: number
   timingSource: TimingSource
+  gpuMemoryBytes: number
 }
 
 export interface LoadedWebGpuVideoPipeline {
@@ -116,7 +117,7 @@ export async function initWebGpuVideoPipeline(): Promise<LoadedWebGpuVideoPipeli
     usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
   })
 
-  const gpuMemoryBytes = SRC_FRAME_BYTES + MAX_DOWNSCALE_BYTES + PARAM_BYTES
+  const gpuMemoryBytes = SRC_FRAME_BYTES + MAX_DOWNSCALE_BYTES + PARAM_BYTES + readback.size
 
   await device.queue.onSubmittedWorkDone()
 
@@ -139,7 +140,7 @@ export async function processVideoFrameWebGpu(
   if (frameRgba.byteLength !== SRC_FRAME_BYTES) {
     throw new Error(`Invalid frame size: expected ${SRC_FRAME_BYTES} bytes.`)
   }
-
+  const cpuStart = performance.now()
   if (quality === '1080p') {
     return {
       rgba: Buffer.from(frameRgba),
@@ -148,6 +149,7 @@ export async function processVideoFrameWebGpu(
       gpuDurationMs: 0,
       backendDurationMs: 0,
       timingSource: 'cpu-clock',
+      gpuMemoryBytes: 0,
     }
   }
 
@@ -212,7 +214,6 @@ export async function processVideoFrameWebGpu(
       encoder.copyBufferToBuffer(queryResolve, 0, queryReadback, 0, 16)
     }
 
-    const cpuStart = performance.now()
     pipeline.device.queue.submit([encoder.finish()])
 
     const waits: Promise<void>[] = [
@@ -248,6 +249,7 @@ export async function processVideoFrameWebGpu(
       gpuDurationMs: Number(gpuMs.toFixed(3)),
       backendDurationMs: Number(cpuMs.toFixed(3)),
       timingSource,
+      gpuMemoryBytes: (queryResolve?.size ?? 0) + (queryReadback?.size ?? 0),
     }
   } finally {
     if (queryResolve) queryResolve.destroy()
@@ -294,13 +296,14 @@ export interface VideoHistogramResult {
   gpuDurationMs: number
   backendDurationMs: number
   timingSource: TimingSource
+  gpuMemoryBytes: number
 }
 
 export async function computeHistogramWebGpu(frameRgba: Uint8Array): Promise<VideoHistogramResult> {
   if (frameRgba.byteLength !== SRC_FRAME_BYTES) {
     throw new Error(`Invalid frame size: expected ${SRC_FRAME_BYTES} bytes.`)
   }
-
+  const cpuStart = performance.now()
   const device = await getGpuDevice()
   const pipeline = getHistogramPipeline(device)
 
@@ -368,7 +371,6 @@ export async function computeHistogramWebGpu(frameRgba: Uint8Array): Promise<Vid
       encoder.copyBufferToBuffer(queryResolve, 0, queryReadback, 0, 16)
     }
 
-    const cpuStart = performance.now()
     device.queue.submit([encoder.finish()])
 
     const waits: Promise<void>[] = [device.queue.onSubmittedWorkDone(), histogramReadback.mapAsync(GPUMapMode.READ)]
@@ -399,6 +401,12 @@ export async function computeHistogramWebGpu(frameRgba: Uint8Array): Promise<Vid
       gpuDurationMs: Number(gpuMs.toFixed(3)),
       backendDurationMs: Number(cpuMs.toFixed(3)),
       timingSource,
+      gpuMemoryBytes:
+        inputBuffer.size +
+        histogramBuffer.size +
+        histogramReadback.size +
+        (queryResolve?.size ?? 0) +
+        (queryReadback?.size ?? 0),
     }
   } finally {
     inputBuffer.destroy()

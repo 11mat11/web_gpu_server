@@ -70,6 +70,14 @@ const HistogramBodySchema = z
   })
   .describe('Parametry żądania histogramu RGB dla pojedynczej klatki.')
   .example({ fileName: 'video_frames_1080p_rgba.bin', frameIndex: 0, backend: 'webgpu' })
+const MemorySchema = z
+  .object({
+    gpuBytes: z.number().nullable().describe('Suma bajtów GPUBuffer utworzonych w żądaniu.').example(67108864),
+    hostBytes: z.number().nullable().describe('Suma bajtów buforów Buffer/ArrayBuffer utworzonych w żądaniu.').example(33554432),
+    serverRssBytes: z.number().describe('process.memoryUsage().rss po zakończeniu obliczeń.').example(123456789),
+  })
+  .describe('Ujednolicony raport pamięci dla żądania obliczeniowego.')
+  .example({ gpuBytes: 67108864, hostBytes: 33554432, serverRssBytes: 123456789 })
 
 function asBase64(buffer: Buffer): string {
   return buffer.toString('base64')
@@ -110,6 +118,15 @@ export async function videoRoute(server: FastifyInstance) {
               backendDurationMs: { type: 'number' },
               serverDurationMs: { type: 'number' },
               backend: { type: 'string', enum: ['webgpu', 'cuda'] },
+              memory: {
+                type: 'object',
+                description: 'Ujednolicony raport pamięci dla żądania obliczeniowego.',
+                properties: {
+                  gpuBytes: { type: ['number', 'null'] },
+                  hostBytes: { type: ['number', 'null'] },
+                  serverRssBytes: { type: 'number' },
+                },
+              },
             },
           },
           400: {
@@ -159,12 +176,18 @@ export async function videoRoute(server: FastifyInstance) {
             : await computeHistogramCuda(frame)
 
         const serverDurationMs = performance.now() - startedAt
+        const memory: z.infer<typeof MemorySchema> = {
+          gpuBytes: 'memory' in result ? result.memory.gpuAllocatedBytes : result.gpuMemoryBytes,
+          hostBytes: video.byteLength + result.histogram.length * Uint32Array.BYTES_PER_ELEMENT,
+          serverRssBytes: process.memoryUsage().rss,
+        }
         return reply.send({
           histogram: result.histogram,
           gpuDurationMs: Number(result.gpuDurationMs.toFixed(3)),
           backendDurationMs: Number(result.backendDurationMs.toFixed(3)),
           serverDurationMs: Number(serverDurationMs.toFixed(3)),
           backend: parsed.data.backend,
+          memory,
         })
       } catch (error) {
         return reply.code(500).send({
@@ -235,7 +258,7 @@ export async function videoRoute(server: FastifyInstance) {
 
     let webgpuPipeline: LoadedWebGpuVideoPipeline | null = null
     let cudaPipelineReady = false
-    let gpuMemoryBytes = 0
+    let pipelineGpuBytes = 0
 
     const cleanupBackend = async (): Promise<void> => {
       if (webgpuPipeline) {
@@ -248,7 +271,7 @@ export async function videoRoute(server: FastifyInstance) {
         cudaPipelineReady = false
       }
 
-      gpuMemoryBytes = 0
+      pipelineGpuBytes = 0
     }
 
     const stopStreaming = async (): Promise<void> => {
@@ -296,6 +319,8 @@ export async function videoRoute(server: FastifyInstance) {
         let timingSource: 'gpu-timestamp' | 'cpu-clock' = 'cpu-clock'
         let width: number = videoLayout.srcWidth
         let height: number = videoLayout.srcHeight
+        let gpuBytes: number | null = null
+        let hostBytes = 0
 
         if (selectedQuality !== '1080p') {
           if (selectedBackend === 'webgpu') {
@@ -309,6 +334,7 @@ export async function videoRoute(server: FastifyInstance) {
             timingSource = result.timingSource
             width = result.width
             height = result.height
+            gpuBytes = 'memory' in result ? (result as any).memory.gpuAllocatedBytes : (result as any).gpuMemoryBytes
           } else {
             const result = await processVideoFrameCuda(sourceFrame, selectedQuality)
             rgba = result.rgba
@@ -325,23 +351,31 @@ export async function videoRoute(server: FastifyInstance) {
               width = videoLayout.dstWidth160
               height = videoLayout.dstHeight160
             }
-            gpuMemoryBytes = result.gpuMemoryBytes
+            gpuBytes = result.memory.gpuAllocatedBytes
           }
         }
 
         let frameDataBase64: string
         let format: 'rgba' | 'jpeg'
+        const baseHostBytes = selectedQuality === '1080p' ? 0 : rgba.byteLength
         if (selectedCompress) {
           const encoded = encodeJpeg({ data: rgba, width, height }, 80)
-          frameDataBase64 = asBase64(Buffer.from(encoded.data))
+          const encodedBuffer = Buffer.from(encoded.data)
+          frameDataBase64 = asBase64(encodedBuffer)
           format = 'jpeg'
+          hostBytes = baseHostBytes + encodedBuffer.byteLength
         } else {
           frameDataBase64 = asBase64(rgba)
           format = 'rgba'
+          hostBytes = baseHostBytes
         }
 
         const serverDurationMs = performance.now() - startedAt
-        const serverMemoryBytes = process.memoryUsage().rss
+        const memory: z.infer<typeof MemorySchema> = {
+          gpuBytes,
+          hostBytes,
+          serverRssBytes: process.memoryUsage().rss,
+        }
 
         await new Promise<void>((resolve, reject) => {
           socket.send(
@@ -356,8 +390,7 @@ export async function videoRoute(server: FastifyInstance) {
               gpuDurationMs: Number(gpuDurationMs.toFixed(3)),
               backendDurationMs: Number(backendDurationMs.toFixed(3)),
               serverDurationMs: Number(serverDurationMs.toFixed(3)),
-              gpuMemoryBytes,
-              serverMemoryBytes,
+              memory,
               timingSource,
             }),
             (err?: Error) => {
@@ -419,7 +452,7 @@ export async function videoRoute(server: FastifyInstance) {
           const gpuInitStart = performance.now()
           if (selectedBackend === 'webgpu') {
             webgpuPipeline = await initWebGpuVideoPipeline()
-            gpuMemoryBytes = webgpuPipeline.gpuMemoryBytes
+            pipelineGpuBytes = webgpuPipeline.gpuMemoryBytes
           } else {
             const runtime = getCudaRuntimeState()
             if (!runtime.enabled) {
@@ -433,9 +466,15 @@ export async function videoRoute(server: FastifyInstance) {
               dstHeight: videoLayout.dstHeight720,
             })
             cudaPipelineReady = true
-            gpuMemoryBytes = initResult.gpuMemoryBytes
+            pipelineGpuBytes = initResult.memory.gpuAllocatedBytes
           }
           const gpuInitTimeMs = performance.now() - gpuInitStart
+
+          const memory: z.infer<typeof MemorySchema> = {
+            gpuBytes: pipelineGpuBytes,
+            hostBytes: loadedVideo?.byteLength ?? 0,
+            serverRssBytes: process.memoryUsage().rss,
+          }
 
           frameIndex = 0
           isStreaming = true
@@ -451,7 +490,7 @@ export async function videoRoute(server: FastifyInstance) {
               frameCount,
               hostLoadTimeMs: Number(hostLoadTimeMs.toFixed(3)),
               gpuInitTimeMs: Number(gpuInitTimeMs.toFixed(3)),
-              gpuMemoryBytes,
+              memory,
             }),
           )
 
