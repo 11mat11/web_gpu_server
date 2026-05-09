@@ -11,7 +11,8 @@ export interface RenderSceneResult {
   rgba: Buffer
   width: number
   height: number
-  gpuTimeMs: number
+  gpuDurationMs: number
+  backendDurationMs: number
   timingSource: TimingSource
   gpuMemoryBytes: number
 }
@@ -277,7 +278,8 @@ export async function renderSceneWebGpuRender(
       rgba: output,
       width,
       height,
-      gpuTimeMs: Number(gpuMs.toFixed(3)),
+      gpuDurationMs: Number(gpuMs.toFixed(3)),
+      backendDurationMs: Number(cpuMs.toFixed(3)),
       timingSource,
       gpuMemoryBytes,
     }
@@ -406,7 +408,8 @@ export async function renderSceneWebGpuCompute(
       rgba: output,
       width,
       height,
-      gpuTimeMs: Number(gpuMs.toFixed(3)),
+      gpuDurationMs: Number(gpuMs.toFixed(3)),
+      backendDurationMs: Number(cpuMs.toFixed(3)),
       timingSource,
       gpuMemoryBytes,
     }

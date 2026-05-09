@@ -72,6 +72,9 @@ const modelStatusSchema = {
   },
 } as const
 
+/**
+ * Endpointy zarządzania modelami AI (MLP/CNN) i inferencji GPU.
+ */
 export async function ai(server: FastifyInstance) {
   server.get(
     '/status',
@@ -114,6 +117,7 @@ export async function ai(server: FastifyInstance) {
               },
             },
           },
+          400: aiErrorSchema,
           500: aiErrorSchema,
         },
       },
@@ -220,7 +224,8 @@ export async function ai(server: FastifyInstance) {
               prediction: { type: 'number' },
               probabilities: { type: 'array', items: { type: 'number' }, minItems: 10, maxItems: 10 },
               gpuDurationMs: { type: 'number' },
-              totalDurationMs: { type: 'number' },
+              backendDurationMs: { type: 'number' },
+              serverDurationMs: { type: 'number' },
               timingSource: { type: 'string', enum: ['gpu-timestamp', 'cpu-clock'] },
             },
           },
@@ -272,7 +277,8 @@ export async function ai(server: FastifyInstance) {
               predictionLabel: { type: 'string' },
               probabilities: { type: 'array', items: { type: 'number' }, minItems: 10, maxItems: 10 },
               gpuDurationMs: { type: 'number' },
-              totalDurationMs: { type: 'number' },
+              backendDurationMs: { type: 'number' },
+              serverDurationMs: { type: 'number' },
               timingSource: { type: 'string', enum: ['gpu-timestamp', 'cpu-clock'] },
               memoryEstimate: memoryNodeSchema,
             },

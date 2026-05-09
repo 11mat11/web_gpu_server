@@ -6,6 +6,17 @@ import {
   serializeGpuLimits,
 } from '../gpu/device.js'
 
+const errorResponseSchema = {
+  type: 'object',
+  properties: {
+    error: { type: 'string' },
+    message: { type: 'string' },
+  },
+} as const
+
+/**
+ * Exposes GPU adapter diagnostics and a minimal compute validation.
+ */
 export async function gpuInfoRoute(server: FastifyInstance) {
   // ─── GET /gpu/info ────────────────────────────────────────────────────────
   server.get(
@@ -29,6 +40,8 @@ export async function gpuInfoRoute(server: FastifyInstance) {
                 limits:        { type: 'object', additionalProperties: { type: 'number' } },
               },
             },
+            400: errorResponseSchema,
+            500: errorResponseSchema,
           },
         },
       },
@@ -89,6 +102,7 @@ export async function gpuInfoRoute(server: FastifyInstance) {
                 message:     { type: 'string' },
               },
             },
+            400: errorResponseSchema,
             500: {
               type: 'object',
               properties: {
@@ -204,13 +218,16 @@ export async function gpuInfoRoute(server: FastifyInstance) {
   )
 }
 
+/**
+ * Creates a storage buffer and initializes it from a typed array.
+ */
 function makeStorageBuffer(device: GPUDevice, data: Float32Array): GPUBuffer {
-  const buf = device.createBuffer({
-    size: data.byteLength,
-    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-    mappedAtCreation: true,
-  })
-  new Float32Array(buf.getMappedRange()).set(data)
-  buf.unmap()
-  return buf
-}
+   const buf = device.createBuffer({
+     size: data.byteLength,
+     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+     mappedAtCreation: true,
+   })
+   new Float32Array(buf.getMappedRange()).set(data)
+   buf.unmap()
+   return buf
+ }

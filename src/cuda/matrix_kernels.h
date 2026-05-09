@@ -78,6 +78,22 @@ void launchVideoRgbHistogramKernel(
   cudaStream_t stream
 );
 
+void launchGaussianBlurHorizontalKernel(
+  const unsigned char* inputRgba,
+  unsigned char* outputRgba,
+  int width,
+  int height,
+  cudaStream_t stream
+);
+
+void launchGaussianBlurVerticalKernel(
+  const unsigned char* inputRgba,
+  unsigned char* outputRgba,
+  int width,
+  int height,
+  cudaStream_t stream
+);
+
 void launchRenderSceneKernel(
   const float* shapes,
   int shapeCount,

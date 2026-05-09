@@ -494,6 +494,38 @@ CudaMatrixRequest ParseCudaMatrixRequest(const Napi::CallbackInfo& info) {
   return request;
 }
 
+struct CudaGaussianRequest {
+  int width = 0;
+  int height = 0;
+  bool readback = false;
+  std::vector<uint8_t> input;
+};
+
+CudaGaussianRequest ParseGaussianBlurRequest(const Napi::CallbackInfo& info) {
+  if (info.Length() < 1 || !info[0].IsObject()) {
+    throw std::runtime_error("gaussianBlurCuda expects an options object.");
+  }
+
+  const Napi::Object options = info[0].As<Napi::Object>();
+  CudaGaussianRequest request;
+  request.width = options.Get("width").As<Napi::Number>().Int32Value();
+  request.height = options.Get("height").As<Napi::Number>().Int32Value();
+  request.readback = GetBoolProperty(options, "readback", false);
+
+  if (request.width <= 0 || request.height <= 0) {
+    throw std::runtime_error("width and height must be positive integers.");
+  }
+
+  const size_t pixelCount = static_cast<size_t>(request.width) * static_cast<size_t>(request.height);
+  if (pixelCount > (std::numeric_limits<size_t>::max() / 4)) {
+    throw std::runtime_error("Requested image size is too large.");
+  }
+
+  const size_t expectedBytes = pixelCount * 4;
+  request.input = ParseUint8Array(options, "input", expectedBytes);
+  return request;
+}
+
 CudaMatrixWorker::CudaMatrixWorker(Napi::Env env, const CudaMatrixRequest& request)
   : Napi::AsyncWorker(env),
     deferred_(Napi::Promise::Deferred::New(env)),
@@ -509,6 +541,7 @@ Napi::Promise CudaMatrixWorker::GetPromise() const {
 
 void CudaMatrixWorker::Execute() {
   try {
+    const auto totalStart = std::chrono::steady_clock::now();
     const auto matrixElements = static_cast<size_t>(request_.size) * static_cast<size_t>(request_.size);
     const auto matrixBytes = matrixElements * sizeof(float);
 
@@ -554,12 +587,13 @@ void CudaMatrixWorker::Execute() {
     float multiplyDurationMs = 0.0F;
     CUDA_CHECK_THROW(cudaEventElapsedTime(&multiplyDurationMs, multiplyStartEvent_, multiplyStopEvent_));
     multiplyDurationMs_ = static_cast<double>(multiplyDurationMs);
-    totalDurationMs_ = multiplyDurationMs_ + generationDurationMs_.value_or(0.0);
-
     if (request_.readback) {
       output_.resize(matrixElements);
       CUDA_CHECK_THROW(cudaMemcpy(output_.data(), dMatrixC_, matrixBytes, cudaMemcpyDeviceToHost));
     }
+
+    const auto totalStop = std::chrono::steady_clock::now();
+    backendDurationMs_ = std::chrono::duration<double, std::milli>(totalStop - totalStart).count();
   } catch (const std::exception& ex) {
     SetError(ex.what());
   }
@@ -593,7 +627,7 @@ Napi::Value CudaMatrixWorker::BuildResult(Napi::Env env) const {
   }
 
   result.Set("multiplyDurationMs", Napi::Number::New(env, multiplyDurationMs_));
-  result.Set("totalDurationMs", Napi::Number::New(env, totalDurationMs_));
+  result.Set("backendDurationMs", Napi::Number::New(env, backendDurationMs_));
   result.Set("timingSource", Napi::String::New(env, "gpu-timestamp"));
   result.Set("memoryEstimate", BuildMemoryEstimate(env, gpuAllocatedBytes_, hostAllocatedBytes_));
 
@@ -635,6 +669,112 @@ void CudaMatrixWorker::Cleanup() {
     dMatrixC_ = nullptr;
   }
 }
+
+class CudaGaussianBlurWorker final : public Napi::AsyncWorker {
+public:
+  CudaGaussianBlurWorker(Napi::Env env, CudaGaussianRequest request)
+    : Napi::AsyncWorker(env),
+      deferred_(Napi::Promise::Deferred::New(env)),
+      request_(std::move(request)) {}
+
+  Napi::Promise GetPromise() const {
+    return deferred_.Promise();
+  }
+
+  void Execute() override {
+    const auto totalStart = std::chrono::steady_clock::now();
+
+    const size_t pixelCount = static_cast<size_t>(request_.width) * static_cast<size_t>(request_.height);
+    const size_t imageBytes = pixelCount * 4;
+
+    gpuAllocatedBytes_ = imageBytes * 3;
+    hostAllocatedBytes_ = request_.input.size() + (request_.readback ? imageBytes : 0);
+
+    cudaEvent_t startEvent = nullptr;
+    cudaEvent_t stopEvent = nullptr;
+
+    try {
+      CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&dInput_), imageBytes));
+      CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&dTemp_), imageBytes));
+      CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&dOutput_), imageBytes));
+
+      CUDA_CHECK_THROW(cudaMemcpy(dInput_, request_.input.data(), imageBytes, cudaMemcpyHostToDevice));
+
+      CUDA_CHECK_THROW(cudaEventCreate(&startEvent));
+      CUDA_CHECK_THROW(cudaEventCreate(&stopEvent));
+
+      CUDA_CHECK_THROW(cudaEventRecord(startEvent, nullptr));
+      launchGaussianBlurHorizontalKernel(dInput_, dTemp_, request_.width, request_.height, nullptr);
+      CUDA_CHECK_THROW(cudaGetLastError());
+      launchGaussianBlurVerticalKernel(dTemp_, dOutput_, request_.width, request_.height, nullptr);
+      CUDA_CHECK_THROW(cudaGetLastError());
+      CUDA_CHECK_THROW(cudaEventRecord(stopEvent, nullptr));
+      CUDA_CHECK_THROW(cudaEventSynchronize(stopEvent));
+
+      float kernelMs = 0.0F;
+      CUDA_CHECK_THROW(cudaEventElapsedTime(&kernelMs, startEvent, stopEvent));
+      gpuDurationMs_ = static_cast<double>(kernelMs);
+
+      if (request_.readback) {
+        output_.resize(imageBytes);
+        CUDA_CHECK_THROW(cudaMemcpy(output_.data(), dOutput_, imageBytes, cudaMemcpyDeviceToHost));
+      }
+
+      const auto totalStop = std::chrono::steady_clock::now();
+      backendDurationMs_ = std::chrono::duration<double, std::milli>(totalStop - totalStart).count();
+    } catch (const std::exception& ex) {
+      SetError(ex.what());
+    }
+
+    if (startEvent) cudaEventDestroy(startEvent);
+    if (stopEvent) cudaEventDestroy(stopEvent);
+  }
+
+  void OnOK() override {
+    Napi::HandleScope scope(Env());
+    Napi::Object result = Napi::Object::New(Env());
+
+    if (request_.readback) {
+      Napi::ArrayBuffer outputBuffer = Napi::ArrayBuffer::New(Env(), output_.size());
+      std::memcpy(outputBuffer.Data(), output_.data(), output_.size());
+      result.Set("output", Napi::Uint8Array::New(Env(), output_.size(), outputBuffer, 0));
+    } else {
+      result.Set("output", Env().Null());
+    }
+
+    result.Set("gpuDurationMs", Napi::Number::New(Env(), gpuDurationMs_));
+    result.Set("backendDurationMs", Napi::Number::New(Env(), backendDurationMs_));
+    result.Set("timingSource", Napi::String::New(Env(), "gpu-timestamp"));
+    result.Set("memoryEstimate", BuildMemoryEstimate(Env(), gpuAllocatedBytes_, hostAllocatedBytes_));
+
+    deferred_.Resolve(result);
+  }
+
+  void OnError(const Napi::Error& error) override {
+    Napi::HandleScope scope(Env());
+    deferred_.Reject(error.Value());
+  }
+
+  ~CudaGaussianBlurWorker() override {
+    if (dInput_) cudaFree(dInput_);
+    if (dTemp_) cudaFree(dTemp_);
+    if (dOutput_) cudaFree(dOutput_);
+  }
+
+private:
+  Napi::Promise::Deferred deferred_;
+  CudaGaussianRequest request_;
+
+  unsigned char* dInput_ = nullptr;
+  unsigned char* dTemp_ = nullptr;
+  unsigned char* dOutput_ = nullptr;
+
+  std::vector<uint8_t> output_;
+  double gpuDurationMs_ = 0.0;
+  double backendDurationMs_ = 0.0;
+  size_t gpuAllocatedBytes_ = 0;
+  size_t hostAllocatedBytes_ = 0;
+};
 
 class CudaMlpLoadWorker final : public Napi::AsyncWorker {
 public:
@@ -779,7 +919,7 @@ public:
       CUDA_CHECK_THROW(cudaMemcpy(output_.data(), gMlpModel.dOut, kMlpOutputSize * sizeof(float), cudaMemcpyDeviceToHost));
 
       const auto totalStop = std::chrono::steady_clock::now();
-      totalDurationMs_ = std::chrono::duration<double, std::milli>(totalStop - totalStart).count();
+      backendDurationMs_ = std::chrono::duration<double, std::milli>(totalStop - totalStart).count();
       destroyEvents();
     } catch (const std::exception& ex) {
       destroyEvents();
@@ -796,7 +936,7 @@ public:
 
     result.Set("logits", Napi::Float32Array::New(Env(), output_.size(), logitsBuffer, 0));
     result.Set("gpuDurationMs", Napi::Number::New(Env(), gpuDurationMs_));
-    result.Set("totalDurationMs", Napi::Number::New(Env(), totalDurationMs_));
+    result.Set("backendDurationMs", Napi::Number::New(Env(), backendDurationMs_));
     result.Set("timingSource", Napi::String::New(Env(), "gpu-timestamp"));
 
     deferred_.Resolve(result);
@@ -812,7 +952,7 @@ private:
   std::vector<float> input_;
   std::vector<float> output_;
   double gpuDurationMs_ = 0.0;
-  double totalDurationMs_ = 0.0;
+  double backendDurationMs_ = 0.0;
 };
 
 class CudaMlpUnloadWorker final : public Napi::AsyncWorker {
@@ -1143,7 +1283,7 @@ public:
       CUDA_CHECK_THROW(cudaMemcpy(output_.data(), gCnnModel.dOut, kCnnOutputSize * sizeof(float), cudaMemcpyDeviceToHost));
 
       const auto totalStop = std::chrono::steady_clock::now();
-      totalDurationMs_ = std::chrono::duration<double, std::milli>(totalStop - totalStart).count();
+      backendDurationMs_ = std::chrono::duration<double, std::milli>(totalStop - totalStart).count();
       destroyEvents();
     } catch (const std::exception& ex) {
       destroyEvents();
@@ -1160,7 +1300,7 @@ public:
 
     result.Set("logits", Napi::Float32Array::New(Env(), output_.size(), logitsBuffer, 0));
     result.Set("gpuDurationMs", Napi::Number::New(Env(), gpuDurationMs_));
-    result.Set("totalDurationMs", Napi::Number::New(Env(), totalDurationMs_));
+    result.Set("backendDurationMs", Napi::Number::New(Env(), backendDurationMs_));
     result.Set("timingSource", Napi::String::New(Env(), "gpu-timestamp"));
     result.Set("memoryEstimate", BuildMemoryEstimate(Env(), gCnnModel.gpuAllocatedBytes, kCnnTotalWeightsCount * sizeof(float)));
 
@@ -1177,7 +1317,7 @@ private:
   std::vector<float> input_;
   std::vector<float> output_;
   double gpuDurationMs_ = 0.0;
-  double totalDurationMs_ = 0.0;
+  double backendDurationMs_ = 0.0;
 };
 class CudaCnnUnloadWorker final : public Napi::AsyncWorker {
 public:
@@ -1346,7 +1486,7 @@ public:
       CUDA_CHECK_THROW(cudaMemcpy(output_.data(), gVideoState.dOutput, outputBytes, cudaMemcpyDeviceToHost));
 
       const auto totalStop = std::chrono::steady_clock::now();
-      totalDurationMs_ = std::chrono::duration<double, std::milli>(totalStop - totalStart).count();
+      backendDurationMs_ = std::chrono::duration<double, std::milli>(totalStop - totalStart).count();
       gpuMemoryBytes_ = gVideoState.gpuAllocatedBytes;
 
       if (startEvent) {
@@ -1374,7 +1514,7 @@ public:
     std::memcpy(outBuffer.Data(), output_.data(), output_.size());
     result.Set("output", Napi::Uint8Array::New(Env(), output_.size(), outBuffer, 0));
     result.Set("gpuDurationMs", Napi::Number::New(Env(), gpuDurationMs_));
-    result.Set("totalDurationMs", Napi::Number::New(Env(), totalDurationMs_));
+    result.Set("backendDurationMs", Napi::Number::New(Env(), backendDurationMs_));
     result.Set("timingSource", Napi::String::New(Env(), "gpu-timestamp"));
     result.Set("gpuMemoryBytes", Napi::Number::New(Env(), static_cast<double>(gpuMemoryBytes_)));
 
@@ -1392,7 +1532,7 @@ private:
   std::string quality_;
   std::vector<uint8_t> output_;
   double gpuDurationMs_ = 0.0;
-  double totalDurationMs_ = 0.0;
+  double backendDurationMs_ = 0.0;
   size_t gpuMemoryBytes_ = 0;
 };
 
@@ -1453,7 +1593,7 @@ public:
         cudaMemcpyDeviceToHost));
 
       const auto totalStop = std::chrono::steady_clock::now();
-      totalDurationMs_ = std::chrono::duration<double, std::milli>(totalStop - totalStart).count();
+      backendDurationMs_ = std::chrono::duration<double, std::milli>(totalStop - totalStart).count();
 
       if (startEvent) cudaEventDestroy(startEvent);
       if (stopEvent) cudaEventDestroy(stopEvent);
@@ -1479,7 +1619,7 @@ public:
 
     result.Set("histogram", histogramArray);
     result.Set("gpuDurationMs", Napi::Number::New(Env(), gpuDurationMs_));
-    result.Set("totalDurationMs", Napi::Number::New(Env(), totalDurationMs_));
+    result.Set("backendDurationMs", Napi::Number::New(Env(), backendDurationMs_));
     result.Set("timingSource", Napi::String::New(Env(), "gpu-timestamp"));
     deferred_.Resolve(result);
   }
@@ -1494,7 +1634,7 @@ private:
   std::vector<uint8_t> input_;
   std::vector<unsigned int> histogram_;
   double gpuDurationMs_ = 0.0;
-  double totalDurationMs_ = 0.0;
+  double backendDurationMs_ = 0.0;
 };
 
 class CudaVideoUnloadWorker final : public Napi::AsyncWorker {
@@ -1592,7 +1732,7 @@ public:
       CUDA_CHECK_THROW(cudaMemcpy(output_.data(), dOutput, outputBytes, cudaMemcpyDeviceToHost));
 
       const auto totalStop = std::chrono::steady_clock::now();
-      totalDurationMs_ = std::chrono::duration<double, std::milli>(totalStop - totalStart).count();
+      backendDurationMs_ = std::chrono::duration<double, std::milli>(totalStop - totalStart).count();
       gpuMemoryBytes_ = shapeBytes + outputBytes;
 
       if (startEvent) cudaEventDestroy(startEvent);
@@ -1616,7 +1756,7 @@ public:
     std::memcpy(outBuffer.Data(), output_.data(), output_.size());
     result.Set("output", Napi::Uint8Array::New(Env(), output_.size(), outBuffer, 0));
     result.Set("gpuDurationMs", Napi::Number::New(Env(), gpuDurationMs_));
-    result.Set("totalDurationMs", Napi::Number::New(Env(), totalDurationMs_));
+    result.Set("backendDurationMs", Napi::Number::New(Env(), backendDurationMs_));
     result.Set("timingSource", Napi::String::New(Env(), "gpu-timestamp"));
     result.Set("gpuMemoryBytes", Napi::Number::New(Env(), static_cast<double>(gpuMemoryBytes_)));
 
@@ -1636,7 +1776,7 @@ private:
   int height_ = 0;
   std::vector<uint8_t> output_;
   double gpuDurationMs_ = 0.0;
-  double totalDurationMs_ = 0.0;
+  double backendDurationMs_ = 0.0;
   size_t gpuMemoryBytes_ = 0;
 };
 
@@ -1861,6 +2001,21 @@ Napi::Value RenderScene(const Napi::CallbackInfo& info) {
   }
 }
 
+Napi::Value GaussianBlurCuda(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+
+  try {
+    const CudaGaussianRequest request = ParseGaussianBlurRequest(info);
+    auto* worker = new CudaGaussianBlurWorker(env, std::move(request));
+    Napi::Promise promise = worker->GetPromise();
+    worker->Queue();
+    return promise;
+  } catch (const std::exception& ex) {
+    Napi::Error::New(env, ex.what()).ThrowAsJavaScriptException();
+    return env.Undefined();
+  }
+}
+
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("multiplyMatrixCuda", Napi::Function::New(env, MultiplyMatrixCuda));
   exports.Set("loadModel", Napi::Function::New(env, LoadModel));
@@ -1874,6 +2029,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("videoHistogram", Napi::Function::New(env, VideoHistogram));
   exports.Set("unloadVideoPipeline", Napi::Function::New(env, UnloadVideoPipeline));
   exports.Set("renderScene", Napi::Function::New(env, RenderScene));
+  exports.Set("gaussianBlurCuda", Napi::Function::New(env, GaussianBlurCuda));
   return exports;
 }
 

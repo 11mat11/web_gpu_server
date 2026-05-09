@@ -4,6 +4,14 @@ import { resolve } from 'node:path'
 import { z } from 'zod'
 import { getGpuDevice } from '../gpu/device.js'
 
+const errorResponseSchema = {
+  type: 'object',
+  properties: {
+    error: { type: 'string' },
+    message: { type: 'string' },
+  },
+} as const
+
 // ─── Job store ────────────────────────────────────────────────────────────────
 
 interface StressJob {
@@ -214,14 +222,32 @@ async function touchAllocatedBuffers(device: GPUDevice, buffers: GPUBuffer[]): P
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
-const StressBodySchema = z.object({
-  durationSec: z.number().int().min(1).max(300).default(30),
-  /** Explicit target in MB (256 – 24576), default 1 GB */
-  targetMb: z.number().int().min(256).max(24576).default(DEFAULT_MB),
-})
+const StressBodySchema = z
+  .object({
+    durationSec: z
+      .number()
+      .int()
+      .min(1)
+      .max(300)
+      .default(30)
+      .describe('Czas utrzymania alokacji VRAM (sekundy).')
+      .example(30),
+    /** Explicit target in MB (256 – 24576), default 1 GB */
+    targetMb: z
+      .number()
+      .int()
+      .min(256)
+      .max(24576)
+      .default(DEFAULT_MB)
+      .describe('Docelowa wielkość VRAM w MB dla testu obciążeniowego.')
+      .example(DEFAULT_MB),
+  })
+  .describe('Parametry testu obciążeniowego VRAM (WebGPU).')
+  .example({ durationSec: 30, targetMb: DEFAULT_MB })
 
-// ─── Route ────────────────────────────────────────────────────────────────────
-
+/**
+ * VRAM stress tests for WebGPU (allocation, touch, and lifecycle tracking).
+ */
 export async function gpuStressRoute(server: FastifyInstance) {
 
   // POST /gpu/stress/start ───────────────────────────────────────────────────
@@ -252,6 +278,7 @@ export async function gpuStressRoute(server: FastifyInstance) {
                 status:      { type: 'string' },
               },
             },
+            400: errorResponseSchema,
             500: {
               type: 'object',
               properties: { error: { type: 'string' }, message: { type: 'string' } },
@@ -351,19 +378,21 @@ export async function gpuStressRoute(server: FastifyInstance) {
           params: { type: 'object', properties: { id: { type: 'string' } } },
           response: {
             200: { type: 'object', properties: { released: { type: 'boolean' }, id: { type: 'string' } } },
+            400: errorResponseSchema,
             404: { type: 'object', properties: { error: { type: 'string' } } },
-          },
-        },
-      },
-      async (req, reply) => {
-        const { id } = req.params as { id: string }
-        const ok = releaseJob(id)
-        if (!ok) {
-          reply.statusCode = 404
-          return reply.send({ error: `Job ${id} not found or already released` })
-        }
-        console.log(`[GPU Stress] 🟢 Manually released ${id}`)
-        return reply.send({ released: true, id })
+            500: errorResponseSchema,
+           },
+         },
+       },
+       async (req, reply) => {
+         const { id } = req.params as { id: string }
+         const ok = releaseJob(id)
+         if (!ok) {
+           reply.statusCode = 404
+           return reply.send({ error: `Job ${id} not found or already released` })
+         }
+         console.log(`[GPU Stress] 🟢 Manually released ${id}`)
+         return reply.send({ released: true, id })
       },
   )
 
@@ -392,9 +421,11 @@ export async function gpuStressRoute(server: FastifyInstance) {
                 },
               },
             },
-          },
-        },
-      },
-      async (_req, reply) => reply.send([...activeJobs.values()]),
-  )
-}
+            400: errorResponseSchema,
+            500: errorResponseSchema,
+           },
+         },
+       },
+       async (_req, reply) => reply.send([...activeJobs.values()]),
+   )
+ }

@@ -8,9 +8,9 @@ import {
 import { getGpuDevice } from '../gpu/device.js'
 import { getCudaRuntimeState, multiplyMatrixCuda } from '../cuda/cudaBackend.js'
 
-const BackendSchema = z.enum(['webgpu', 'cuda', 'cpu'])
-const InputModeSchema = z.enum(['random', 'custom'])
-const TimingSourceSchema = z.enum(['gpu-timestamp', 'cpu-clock'])
+const BackendSchema = z.enum(['webgpu', 'cuda', 'cpu']).describe('Backend obliczeń macierzy.').example('webgpu')
+const InputModeSchema = z.enum(['random', 'custom']).describe('Źródło danych wejściowych macierzy.').example('random')
+const TimingSourceSchema = z.enum(['gpu-timestamp', 'cpu-clock']).describe('Źródło pomiaru czasu.').example('gpu-timestamp')
 const MATRIX_C_RESPONSE_LIMIT = 100
 const U32_MAX = 0xffffffff
 
@@ -35,17 +35,57 @@ function createMulberry32(seed: number): () => number {
   }
 }
 
-const MatrixBodySchema = z.object({
-  size: z.number().int().min(1).default(512),
-  backend: BackendSchema.default('webgpu'),
-  inputMode: InputModeSchema.default('random'),
-  optimized: z.boolean().default(false),
-  randomMin: z.number().default(0),
-  randomMax: z.number().default(9),
-  randomSeed: z.number().int().min(0).max(U32_MAX).optional(),
-  matrixA: z.array(z.array(z.number().finite())).optional(),
-  matrixB: z.array(z.array(z.number().finite())).optional(),
-})
+const MatrixBodySchema = z
+  .object({
+    size: z
+      .number()
+      .int()
+      .min(1)
+      .default(512)
+      .describe('Rozmiar macierzy NxN.')
+      .example(512),
+    backend: BackendSchema.default('webgpu')
+      .describe('Backend wykonania mnożenia.')
+      .example('webgpu'),
+    inputMode: InputModeSchema.default('random')
+      .describe('Tryb wejścia: random generuje A/B, custom używa danych z requestu.')
+      .example('random'),
+    optimized: z
+      .boolean()
+      .default(false)
+      .describe('Dla GPU: true=tiled/shared memory, false=naive.')
+      .example(false),
+    randomMin: z
+      .number()
+      .default(0)
+      .describe('Dolna granica losowania (random mode).')
+      .example(0),
+    randomMax: z
+      .number()
+      .default(9)
+      .describe('Górna granica losowania (random mode).')
+      .example(9),
+    randomSeed: z
+      .number()
+      .int()
+      .min(0)
+      .max(U32_MAX)
+      .optional()
+      .describe('Opcjonalny seed deterministyczny (random mode).')
+      .example(123456),
+    matrixA: z
+      .array(z.array(z.number().finite()))
+      .optional()
+      .describe('Macierz A w trybie custom (size x size).')
+      .example([[1, 2], [3, 4]]),
+    matrixB: z
+      .array(z.array(z.number().finite()))
+      .optional()
+      .describe('Macierz B w trybie custom (size x size).')
+      .example([[5, 6], [7, 8]]),
+  })
+  .describe('Parametry mnożenia macierzy do benchmarku WebGPU/CUDA.')
+  .example({ size: 512, backend: 'webgpu', inputMode: 'random', optimized: false, randomMin: -1, randomMax: 1, randomSeed: 42 })
 
 function randomMatrix(size: number, min: number, max: number, seed?: number): Float32Array {
   const out = new Float32Array(size * size)
@@ -142,6 +182,9 @@ function buildProcessMemoryMetrics(before: ProcessMemorySnapshot, after: Process
   }
 }
 
+/**
+ * Benchmark mnożenia macierzy dla WebGPU/CUDA/CPU.
+ */
 export async function matrixRoute(server: FastifyInstance) {
   server.post(
     '/multiply',
@@ -293,7 +336,8 @@ export async function matrixRoute(server: FastifyInstance) {
               serverDurationMs: { type: 'number' },
               generationDurationMs: { type: 'number', nullable: true, description: 'Czas generowania danych wejściowych (random mode).' },
               multiplyDurationMs: { type: 'number', nullable: true, description: 'Czas samego mnożenia macierzy.' },
-              totalDurationMs: { type: 'number', nullable: true, description: 'Suma generationDurationMs + multiplyDurationMs.' },
+              gpuDurationMs: { type: 'number', nullable: true, description: 'Suma generationDurationMs + multiplyDurationMs (czas GPU/CPU dla obliczeń).' },
+              backendDurationMs: { type: 'number', description: 'Czas wykonania backendu (end-to-end w serwerze) bez narzutów sieciowych.' },
               timingSource: {
                 type: 'string',
                 enum: ['gpu-timestamp', 'cpu-clock'],
@@ -384,7 +428,7 @@ export async function matrixRoute(server: FastifyInstance) {
       let effectiveBackend: 'webgpu' | 'cuda' | 'cpu' = body.backend
       let generationDurationMs: number | null = null
       let multiplyDurationMs: number | null = null
-      let totalDurationMs: number | null = null
+      let gpuDurationMs: number | null = null
       let timingSource: z.infer<typeof TimingSourceSchema> = 'cpu-clock'
       let processMemory: ProcessMemoryMetrics | null = null
       let effectiveOptimized = false
@@ -410,7 +454,6 @@ export async function matrixRoute(server: FastifyInstance) {
             const cpuMulStart = performance.now()
             matrixC = multiplySquareMatricesCpu(body.size, matrixA!, matrixB!)
             multiplyDurationMs = performance.now() - cpuMulStart
-            totalDurationMs = (generationDurationMs ?? 0) + multiplyDurationMs
             timingSource = 'cpu-clock'
           } else if (body.inputMode === 'random') {
             const result = await multiplyRandomSquareMatricesWebGpu(body.size, body.randomMin, body.randomMax, {
@@ -426,7 +469,6 @@ export async function matrixRoute(server: FastifyInstance) {
             matrixC = result.output
             generationDurationMs = result.generationDurationMs
             multiplyDurationMs = result.multiplyDurationMs
-            totalDurationMs = result.totalDurationMs
             timingSource = result.timingSource
             effectiveOptimized = body.optimized
           } else {
@@ -440,7 +482,6 @@ export async function matrixRoute(server: FastifyInstance) {
             matrixC = result.output
             generationDurationMs = result.generationDurationMs
             multiplyDurationMs = result.multiplyDurationMs
-            totalDurationMs = result.totalDurationMs
             timingSource = result.timingSource
             effectiveOptimized = body.optimized
           }
@@ -472,7 +513,6 @@ export async function matrixRoute(server: FastifyInstance) {
           matrixC = result.output
           generationDurationMs = result.generationDurationMs
           multiplyDurationMs = result.multiplyDurationMs
-          totalDurationMs = result.totalDurationMs
           timingSource = result.timingSource
           effectiveOptimized = body.optimized
         } else {
@@ -487,7 +527,6 @@ export async function matrixRoute(server: FastifyInstance) {
           const cpuMulStart = performance.now()
           matrixC = multiplySquareMatricesCpu(body.size, matrixA!, matrixB!)
           multiplyDurationMs = performance.now() - cpuMulStart
-          totalDurationMs = (generationDurationMs ?? 0) + multiplyDurationMs
           timingSource = 'cpu-clock'
         }
 
@@ -501,6 +540,8 @@ export async function matrixRoute(server: FastifyInstance) {
 
       const computeDurationMs = performance.now() - computeStart
       const serverDurationMs = performance.now() - serverStart
+      const hasGpuDuration = generationDurationMs !== null || multiplyDurationMs !== null
+      gpuDurationMs = hasGpuDuration ? (generationDurationMs ?? 0) + (multiplyDurationMs ?? 0) : null
       const ops = 2 * body.size ** 3
       const gflopsBaseMs = multiplyDurationMs ?? computeDurationMs
       const gflops = gflopsBaseMs > 0 ? ops / (gflopsBaseMs / 1000) / 1e9 : 0
@@ -513,7 +554,8 @@ export async function matrixRoute(server: FastifyInstance) {
         serverDurationMs: number
         generationDurationMs: number | null
         multiplyDurationMs: number | null
-        totalDurationMs: number | null
+        gpuDurationMs: number | null
+        backendDurationMs: number
         timingSource: z.infer<typeof TimingSourceSchema>
         processMemory: ProcessMemoryMetrics
         gflops: number
@@ -526,7 +568,8 @@ export async function matrixRoute(server: FastifyInstance) {
         serverDurationMs: Number(serverDurationMs.toFixed(3)),
         generationDurationMs: generationDurationMs === null ? null : Number(generationDurationMs.toFixed(3)),
         multiplyDurationMs: multiplyDurationMs === null ? null : Number(multiplyDurationMs.toFixed(3)),
-        totalDurationMs: totalDurationMs === null ? null : Number(totalDurationMs.toFixed(3)),
+        gpuDurationMs: gpuDurationMs === null ? null : Number(gpuDurationMs.toFixed(3)),
+        backendDurationMs: Number(computeDurationMs.toFixed(3)),
         timingSource,
         processMemory: processMemory ?? buildProcessMemoryMetrics(processMemoryBefore, captureProcessMemory()),
         gflops: Number(gflops.toFixed(2)),

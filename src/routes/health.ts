@@ -1,6 +1,17 @@
 import type { FastifyInstance } from 'fastify'
 import { getCudaRuntimeState } from '../cuda/cudaBackend.js'
 
+const errorResponseSchema = {
+  type: 'object',
+  properties: {
+    error: { type: 'string' },
+    message: { type: 'string' },
+  },
+} as const
+
+/**
+ * Health probe for server uptime and CUDA availability (diagnostics only).
+ */
 export async function healthRoute(server: FastifyInstance) {
   server.get(
     '/health',
@@ -24,6 +35,8 @@ export async function healthRoute(server: FastifyInstance) {
               },
             },
           },
+          400: errorResponseSchema,
+          500: errorResponseSchema,
         },
       },
     },

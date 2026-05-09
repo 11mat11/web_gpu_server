@@ -60,7 +60,7 @@ private:
   std::vector<float> output_;
   std::optional<double> generationDurationMs_;
   double multiplyDurationMs_ = 0.0;
-  double totalDurationMs_ = 0.0;
+  double backendDurationMs_ = 0.0;
 
   size_t gpuAllocatedBytes_ = 0;
   size_t hostAllocatedBytes_ = 0;

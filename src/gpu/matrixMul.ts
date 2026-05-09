@@ -25,7 +25,7 @@ export interface RandomGpuMatrixMulOptions {
 export interface MatrixGpuTimings {
   generationDurationMs: number | null
   multiplyDurationMs: number | null
-  totalDurationMs: number | null
+  backendDurationMs: number | null
   timingSource: TimingSource
 }
 
@@ -322,7 +322,7 @@ export async function multiplySquareMatricesWebGpu(
       output,
       generationDurationMs: null,
       multiplyDurationMs,
-      totalDurationMs: multiplyDurationMs,
+      backendDurationMs: multiplyDurationMs,
       timingSource,
     }
   } finally {
@@ -529,7 +529,7 @@ export async function multiplyRandomSquareMatricesWebGpu(
 
     const generationDurationMs = hasValidGenerationGpuTimestamp ? generationTimestampMs : null
     const multiplyDurationMs = hasValidMultiplyGpuTimestamp ? multiplyTimestampMs : cpuPipelineDurationMs
-    const totalDurationMs =
+    const backendDurationMs =
       hasValidGenerationGpuTimestamp && hasValidMultiplyGpuTimestamp
         ? generationTimestampMs! + multiplyTimestampMs!
         : cpuPipelineDurationMs
@@ -539,7 +539,7 @@ export async function multiplyRandomSquareMatricesWebGpu(
       output,
       generationDurationMs,
       multiplyDurationMs,
-      totalDurationMs,
+      backendDurationMs,
       timingSource,
     }
   } finally {

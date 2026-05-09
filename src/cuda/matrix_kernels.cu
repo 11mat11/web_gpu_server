@@ -15,6 +15,12 @@ constexpr int kCnnPoolBlockSize = 16;
 constexpr int kVideoBlockSize = 16;
 constexpr int kVideoHistogramBlockSize = 256;
 constexpr int kRenderBlockSize = 16;
+constexpr int kGaussianBlockSize = 16;
+
+__device__ __forceinline__ float gaussianWeight(int index) {
+  constexpr float kWeights[5] = {0.0625f, 0.25f, 0.375f, 0.25f, 0.0625f};
+  return kWeights[index];
+}
 
 __device__ __forceinline__ uint32_t hash32(uint32_t x) {
   uint32_t v = x * 747796405u + 2891336453u;
@@ -342,6 +348,73 @@ __global__ void videoRgbHistogramKernel(
   atomicAdd(&histogram[512U + static_cast<unsigned int>(pixel.z)], 1U);
 }
 
+__global__ void gaussianBlurHorizontalKernel(
+  const unsigned int* __restrict__ input,
+  unsigned int* __restrict__ output,
+  int width,
+  int height
+) {
+  const int x = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+  const int y = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
+
+  if (x >= width || y >= height) {
+    return;
+  }
+
+  float4 acc = make_float4(0.0f, 0.0f, 0.0f, 0.0f);
+  for (int k = -2; k <= 2; ++k) {
+    const int sx = max(0, min(x + k, width - 1));
+    const unsigned int pixel = input[y * width + sx];
+    const float w = gaussianWeight(k + 2);
+
+    // Twarde wypakowanie bitów, jak w WGSL
+    acc.x += static_cast<float>(pixel & 0xFFu) * w;
+    acc.y += static_cast<float>((pixel >> 8u) & 0xFFu) * w;
+    acc.z += static_cast<float>((pixel >> 16u) & 0xFFu) * w;
+    acc.w += static_cast<float>((pixel >> 24u) & 0xFFu) * w;
+  }
+
+  // Twarde pakowanie bitów z powrotem
+  unsigned int r = static_cast<unsigned int>(fminf(fmaxf(roundf(acc.x), 0.0f), 255.0f));
+  unsigned int g = static_cast<unsigned int>(fminf(fmaxf(roundf(acc.y), 0.0f), 255.0f));
+  unsigned int b = static_cast<unsigned int>(fminf(fmaxf(roundf(acc.z), 0.0f), 255.0f));
+  unsigned int a = static_cast<unsigned int>(fminf(fmaxf(roundf(acc.w), 0.0f), 255.0f));
+
+  output[y * width + x] = r | (g << 8u) | (b << 16u) | (a << 24u);
+}
+
+__global__ void gaussianBlurVerticalKernel(
+  const unsigned int* __restrict__ input,
+  unsigned int* __restrict__ output,
+  int width,
+  int height
+) {
+  const int x = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+  const int y = static_cast<int>(blockIdx.y * blockDim.y + threadIdx.y);
+
+  if (x >= width || y >= height) {
+    return;
+  }
+
+  float4 acc = make_float4(0.0f, 0.0f, 0.0f, 0.0f);
+  for (int k = -2; k <= 2; ++k) {
+    const int sy = max(0, min(y + k, height - 1));
+    const unsigned int pixel = input[sy * width + x];
+    const float w = gaussianWeight(k + 2);
+
+    acc.x += static_cast<float>(pixel & 0xFFu) * w;
+    acc.y += static_cast<float>((pixel >> 8u) & 0xFFu) * w;
+    acc.z += static_cast<float>((pixel >> 16u) & 0xFFu) * w;
+    acc.w += static_cast<float>((pixel >> 24u) & 0xFFu) * w;
+  }
+
+  unsigned int r = static_cast<unsigned int>(fminf(fmaxf(roundf(acc.x), 0.0f), 255.0f));
+  unsigned int g = static_cast<unsigned int>(fminf(fmaxf(roundf(acc.y), 0.0f), 255.0f));
+  unsigned int b = static_cast<unsigned int>(fminf(fmaxf(roundf(acc.z), 0.0f), 255.0f));
+  unsigned int a = static_cast<unsigned int>(fminf(fmaxf(roundf(acc.w), 0.0f), 255.0f));
+
+  output[y * width + x] = r | (g << 8u) | (b << 16u) | (a << 24u);
+}
 __device__ __forceinline__ float2 make_f2(float x, float y) {
   return make_float2(x, y);
 }
@@ -595,6 +668,48 @@ void launchVideoRgbHistogramKernel(
     reinterpret_cast<const uchar4*>(inputRgba),
     histogram,
     pixelCount
+  );
+}
+
+void launchGaussianBlurHorizontalKernel(
+  const unsigned char* inputRgba,
+  unsigned char* outputRgba,
+  int width,
+  int height,
+  cudaStream_t stream
+) {
+  const dim3 block(kGaussianBlockSize, kGaussianBlockSize);
+  const dim3 grid(
+    static_cast<unsigned int>((width + kGaussianBlockSize - 1) / kGaussianBlockSize),
+    static_cast<unsigned int>((height + kGaussianBlockSize - 1) / kGaussianBlockSize)
+  );
+
+  gaussianBlurHorizontalKernel<<<grid, block, 0, stream>>>(
+    reinterpret_cast<const unsigned int*>(inputRgba),
+    reinterpret_cast<unsigned int*>(outputRgba),
+    width,
+    height
+  );
+}
+
+void launchGaussianBlurVerticalKernel(
+  const unsigned char* inputRgba,
+  unsigned char* outputRgba,
+  int width,
+  int height,
+  cudaStream_t stream
+) {
+  const dim3 block(kGaussianBlockSize, kGaussianBlockSize);
+  const dim3 grid(
+    static_cast<unsigned int>((width + kGaussianBlockSize - 1) / kGaussianBlockSize),
+    static_cast<unsigned int>((height + kGaussianBlockSize - 1) / kGaussianBlockSize)
+  );
+
+  gaussianBlurVerticalKernel<<<grid, block, 0, stream>>>(
+    reinterpret_cast<const unsigned int*>(inputRgba),
+    reinterpret_cast<unsigned int*>(outputRgba),
+    width,
+    height
   );
 }
 

@@ -27,7 +27,8 @@ export interface VideoRunResult {
   rgba: Buffer
   width: number
   height: number
-  gpuTimeMs: number
+  gpuDurationMs: number
+  backendDurationMs: number
   timingSource: TimingSource
 }
 
@@ -144,7 +145,8 @@ export async function processVideoFrameWebGpu(
       rgba: Buffer.from(frameRgba),
       width: SRC_WIDTH,
       height: SRC_HEIGHT,
-      gpuTimeMs: 0,
+      gpuDurationMs: 0,
+      backendDurationMs: 0,
       timingSource: 'cpu-clock',
     }
   }
@@ -243,7 +245,8 @@ export async function processVideoFrameWebGpu(
       rgba: out,
       width: target.width,
       height: target.height,
-      gpuTimeMs: Number(gpuMs.toFixed(3)),
+      gpuDurationMs: Number(gpuMs.toFixed(3)),
+      backendDurationMs: Number(cpuMs.toFixed(3)),
       timingSource,
     }
   } finally {
@@ -288,7 +291,8 @@ function getHistogramPipeline(device: GPUDevice): GPUComputePipeline {
 
 export interface VideoHistogramResult {
   histogram: number[]
-  gpuTimeMs: number
+  gpuDurationMs: number
+  backendDurationMs: number
   timingSource: TimingSource
 }
 
@@ -392,7 +396,8 @@ export async function computeHistogramWebGpu(frameRgba: Uint8Array): Promise<Vid
 
     return {
       histogram,
-      gpuTimeMs: Number(gpuMs.toFixed(3)),
+      gpuDurationMs: Number(gpuMs.toFixed(3)),
+      backendDurationMs: Number(cpuMs.toFixed(3)),
       timingSource,
     }
   } finally {

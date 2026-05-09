@@ -46,7 +46,7 @@ export interface LoadedWebGpuMlpModel {
 export interface WebGpuMlpPredictResult {
   logits: Float32Array
   gpuDurationMs: number
-  totalDurationMs: number
+  backendDurationMs: number
   timingSource: TimingSource
 }
 
@@ -408,7 +408,7 @@ export async function predictWithWebGpuMlp(
     return {
       logits,
       gpuDurationMs,
-      totalDurationMs: cpuDurationMs,
+      backendDurationMs: cpuDurationMs,
       timingSource,
     }
   } finally {

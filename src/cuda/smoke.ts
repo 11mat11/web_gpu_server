@@ -22,7 +22,7 @@ async function main() {
         timingSource: result.timingSource,
         generationDurationMs: Number((result.generationDurationMs ?? 0).toFixed(4)),
         multiplyDurationMs: Number(result.multiplyDurationMs.toFixed(4)),
-        totalDurationMs: Number(result.totalDurationMs.toFixed(4)),
+        backendDurationMs: Number(result.backendDurationMs.toFixed(4)),
         outputLength: result.output?.length ?? 0,
       },
       null,

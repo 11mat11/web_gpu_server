@@ -4,12 +4,13 @@ import swagger from '@fastify/swagger'
 import swaggerUi from '@fastify/swagger-ui'
 import websocket from '@fastify/websocket'
 
+import './zod-extensions.js'
+
 import { healthRoute } from './routes/health.js'
 import { gpuInfoRoute } from './routes/gpu-info.js'
 import { gpuStressRoute } from './routes/gpu-stress.js'
 import { imageRoute } from './routes/image.js'
 import { matrixRoute } from './routes/matrix.js'
-import { benchmarkRoute } from './routes/benchmark.js'
 import { ai } from './routes/ai'
 import { videoRoute } from './routes/video.js'
 import { renderRoute } from './routes/render.js'
@@ -36,6 +37,7 @@ export async function buildServer() {
 
   const server = Fastify({
     requestTimeout: requestTimeoutMs,
+    bodyLimit: 50 * 1024 * 1024,
     logger: {
       transport:
           process.env.NODE_ENV === 'development'
@@ -62,7 +64,6 @@ export async function buildServer() {
         { name: 'system', description: 'Server & GPU diagnostics' },
         { name: 'image', description: 'Image processing (filters)' },
         { name: 'matrix', description: 'Matrix operations' },
-        { name: 'benchmark', description: 'Benchmark runner & results' },
         { name: 'ai', description: 'Stateful MLP inference pipeline' },
         { name: 'video', description: 'Video streaming + dynamic downscaling benchmarks' },
         { name: 'render', description: 'Procedural SDF scene rendering benchmarks' },
@@ -83,7 +84,6 @@ export async function buildServer() {
   await server.register(gpuStressRoute,  { prefix: '/gpu/stress' })
   await server.register(imageRoute,      { prefix: '/image' })
   await server.register(matrixRoute,     { prefix: '/matrix' })
-  await server.register(benchmarkRoute,  { prefix: '/benchmark' })
   await server.register(ai,         { prefix: '/ai' })
   await server.register(videoRoute, { prefix: '/video' })
   await server.register(renderRoute, { prefix: '/render' })

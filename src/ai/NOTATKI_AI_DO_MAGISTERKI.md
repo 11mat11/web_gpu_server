@@ -63,7 +63,7 @@ Zwraca:
 - `prediction`,
 - `probabilities`,
 - `gpuDurationMs`,
-- `totalDurationMs`,
+- `backendDurationMs`,
 - `timingSource`.
 
 ### CNN

@@ -22,36 +22,54 @@ import { VideoManager } from '../video/VideoManager.js'
 
 type StreamBackend = 'webgpu' | 'cuda'
 
-const SelectSchema = z.object({
-  action: z.literal('select'),
-  fileName: z.string().min(1),
-  backend: z.enum(['webgpu', 'cuda']),
-  quality: z.enum(['1080p', '720p', '480p', '160p']),
-  compress: z.boolean(),
-})
+const SelectSchema = z
+  .object({
+    action: z.literal('select').describe('Akcja wyboru źródła wideo.').example('select'),
+    fileName: z.string().min(1).describe('Nazwa pliku BIN z klatkami RGBA.').example('video_frames_1080p_rgba.bin'),
+    backend: z.enum(['webgpu', 'cuda']).describe('Backend przetwarzania wideo.').example('webgpu'),
+    quality: z.enum(['1080p', '720p', '480p', '160p']).describe('Docelowa jakość/rozmiar klatki.').example('720p'),
+    compress: z.boolean().describe('Czy kompresować ramkę do JPEG (stream).').example(false),
+  })
+  .describe('Komenda sterująca wyborem strumienia wideo.')
+  .example({ action: 'select', fileName: 'video_frames_1080p_rgba.bin', backend: 'webgpu', quality: '720p', compress: false })
 
-const ResizeSchema = z.object({
-  action: z.literal('resize'),
-  quality: z.enum(['1080p', '720p', '480p', '160p']),
-})
+const ResizeSchema = z
+  .object({
+    action: z.literal('resize').describe('Akcja zmiany jakości strumienia.').example('resize'),
+    quality: z.enum(['1080p', '720p', '480p', '160p']).describe('Nowa jakość/rozmiar klatki.').example('480p'),
+  })
+  .describe('Komenda zmiany jakości strumienia.')
+  .example({ action: 'resize', quality: '480p' })
 
-const PauseSchema = z.object({
-  action: z.literal('pause'),
-})
+const PauseSchema = z
+  .object({
+    action: z.literal('pause').describe('Akcja wstrzymania streamu.').example('pause'),
+  })
+  .describe('Komenda pauzy strumienia.')
+  .example({ action: 'pause' })
 
-const ResumeSchema = z.object({
-  action: z.literal('resume'),
-})
+const ResumeSchema = z
+  .object({
+    action: z.literal('resume').describe('Akcja wznowienia streamu.').example('resume'),
+  })
+  .describe('Komenda wznowienia strumienia.')
+  .example({ action: 'resume' })
 
-const StopSchema = z.object({
-  action: z.literal('stop'),
-})
+const StopSchema = z
+  .object({
+    action: z.literal('stop').describe('Akcja zatrzymania streamu.').example('stop'),
+  })
+  .describe('Komenda zatrzymania strumienia.')
+  .example({ action: 'stop' })
 
-const HistogramBodySchema = z.object({
-  fileName: z.string().min(1),
-  frameIndex: z.number().int().min(0),
-  backend: z.enum(['webgpu', 'cuda']),
-})
+const HistogramBodySchema = z
+  .object({
+    fileName: z.string().min(1).describe('Nazwa pliku BIN z klatkami RGBA.').example('video_frames_1080p_rgba.bin'),
+    frameIndex: z.number().int().min(0).describe('Indeks klatki do analizy histogramu.').example(0),
+    backend: z.enum(['webgpu', 'cuda']).describe('Backend obliczeń histogramu.').example('webgpu'),
+  })
+  .describe('Parametry żądania histogramu RGB dla pojedynczej klatki.')
+  .example({ fileName: 'video_frames_1080p_rgba.bin', frameIndex: 0, backend: 'webgpu' })
 
 function asBase64(buffer: Buffer): string {
   return buffer.toString('base64')
@@ -62,6 +80,9 @@ function sliceFrame(video: Buffer, frameIndex: number): Buffer {
   return video.subarray(offset, offset + videoLayout.srcFrameBytes)
 }
 
+/**
+ * Streaming wideo i benchmarki downscalingu/histogramu (WebGPU/CUDA).
+ */
 export async function videoRoute(server: FastifyInstance) {
   const manager = VideoManager.getInstance()
 
@@ -85,8 +106,9 @@ export async function videoRoute(server: FastifyInstance) {
             type: 'object',
             properties: {
               histogram: { type: 'array', items: { type: 'number' }, minItems: 768, maxItems: 768 },
-              gpuTimeMs: { type: 'number' },
-              serverTimeMs: { type: 'number' },
+              gpuDurationMs: { type: 'number' },
+              backendDurationMs: { type: 'number' },
+              serverDurationMs: { type: 'number' },
               backend: { type: 'string', enum: ['webgpu', 'cuda'] },
             },
           },
@@ -136,11 +158,12 @@ export async function videoRoute(server: FastifyInstance) {
             ? await computeHistogramWebGpu(frame)
             : await computeHistogramCuda(frame)
 
-        const serverTimeMs = performance.now() - startedAt
+        const serverDurationMs = performance.now() - startedAt
         return reply.send({
           histogram: result.histogram,
-          gpuTimeMs: Number(result.gpuTimeMs.toFixed(3)),
-          serverTimeMs: Number(serverTimeMs.toFixed(3)),
+          gpuDurationMs: Number(result.gpuDurationMs.toFixed(3)),
+          backendDurationMs: Number(result.backendDurationMs.toFixed(3)),
+          serverDurationMs: Number(serverDurationMs.toFixed(3)),
           backend: parsed.data.backend,
         })
       } catch (error) {
@@ -163,6 +186,13 @@ export async function videoRoute(server: FastifyInstance) {
             type: 'object',
             properties: {
               files: { type: 'array', items: { type: 'string' } },
+            },
+          },
+          400: {
+            type: 'object',
+            properties: {
+              error: { type: 'string' },
+              message: { type: 'string' },
             },
           },
           500: {
@@ -261,7 +291,8 @@ export async function videoRoute(server: FastifyInstance) {
 
       try {
         let rgba = sourceFrame
-        let gpuTimeMs = 0
+        let gpuDurationMs = 0
+        let backendDurationMs = 0
         let timingSource: 'gpu-timestamp' | 'cpu-clock' = 'cpu-clock'
         let width: number = videoLayout.srcWidth
         let height: number = videoLayout.srcHeight
@@ -273,14 +304,16 @@ export async function videoRoute(server: FastifyInstance) {
             }
             const result = await processVideoFrameWebGpu(webgpuPipeline, sourceFrame, selectedQuality)
             rgba = result.rgba
-            gpuTimeMs = result.gpuTimeMs
+            gpuDurationMs = result.gpuDurationMs
+            backendDurationMs = result.backendDurationMs
             timingSource = result.timingSource
             width = result.width
             height = result.height
           } else {
             const result = await processVideoFrameCuda(sourceFrame, selectedQuality)
             rgba = result.rgba
-            gpuTimeMs = result.gpuDurationMs
+            gpuDurationMs = result.gpuDurationMs
+            backendDurationMs = result.backendDurationMs
             timingSource = result.timingSource
             if (selectedQuality === '720p') {
               width = videoLayout.dstWidth720
@@ -307,7 +340,7 @@ export async function videoRoute(server: FastifyInstance) {
           format = 'rgba'
         }
 
-        const serverTimeMs = performance.now() - startedAt
+        const serverDurationMs = performance.now() - startedAt
         const serverMemoryBytes = process.memoryUsage().rss
 
         await new Promise<void>((resolve, reject) => {
@@ -320,8 +353,9 @@ export async function videoRoute(server: FastifyInstance) {
               quality: selectedQuality,
               format,
               frameDataBase64,
-              gpuTimeMs: Number(gpuTimeMs.toFixed(3)),
-              serverTimeMs: Number(serverTimeMs.toFixed(3)),
+              gpuDurationMs: Number(gpuDurationMs.toFixed(3)),
+              backendDurationMs: Number(backendDurationMs.toFixed(3)),
+              serverDurationMs: Number(serverDurationMs.toFixed(3)),
               gpuMemoryBytes,
               serverMemoryBytes,
               timingSource,
@@ -471,8 +505,3 @@ export async function videoRoute(server: FastifyInstance) {
     })
   })
 }
-
-
-
-
-

@@ -1,8 +1,8 @@
-// plik poglądowy na potem
-
 struct ImageSize {
   width:  u32,
   height: u32,
+  _pad0:  u32,
+  _pad1:  u32,
 }
 
 @group(0) @binding(0) var<uniform>             size   : ImageSize;
@@ -29,17 +29,38 @@ fn pack(c: vec4<f32>) -> u32 {
   return r | (g << 8) | (b << 16) | (a << 24);
 }
 
-@compute @workgroup_size(16, 16)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-  let x = gid.x;
-  let y = gid.y;
-  if (x >= size.width || y >= size.height) { return; }
-
+fn blurHorizontal(x: u32, y: u32) -> vec4<f32> {
   var acc = vec4<f32>(0.0);
   for (var k = -2; k <= 2; k++) {
     let sx = clamp(i32(x) + k, 0, i32(size.width) - 1);
     acc += unpack(src[y * size.width + u32(sx)]) * KERNEL[k + 2];
   }
+  return acc;
+}
 
-  dst[y * size.width + x] = pack(acc);
+fn blurVertical(x: u32, y: u32) -> vec4<f32> {
+  var acc = vec4<f32>(0.0);
+  for (var k = -2; k <= 2; k++) {
+    let sy = clamp(i32(y) + k, 0, i32(size.height) - 1);
+    acc += unpack(src[u32(sy) * size.width + x]) * KERNEL[k + 2];
+  }
+  return acc;
+}
+
+@compute @workgroup_size(16, 16)
+fn mainHorizontal(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let x = gid.x;
+  let y = gid.y;
+  if (x >= size.width || y >= size.height) { return; }
+
+  dst[y * size.width + x] = pack(blurHorizontal(x, y));
+}
+
+@compute @workgroup_size(16, 16)
+fn mainVertical(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let x = gid.x;
+  let y = gid.y;
+  if (x >= size.width || y >= size.height) { return; }
+
+  dst[y * size.width + x] = pack(blurVertical(x, y));
 }

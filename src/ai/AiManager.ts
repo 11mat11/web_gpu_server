@@ -88,7 +88,8 @@ export interface AiPredictResult {
   prediction: number
   probabilities: number[]
   gpuDurationMs: number
-  totalDurationMs: number
+  backendDurationMs: number
+  serverDurationMs: number
   timingSource: 'gpu-timestamp' | 'cpu-clock'
 }
 
@@ -479,13 +480,14 @@ export class AiManager {
 
       const probabilities = softmax(backendResult.logits)
       const prediction = argmax(probabilities)
-      const totalDurationMs = performance.now() - totalStart
+      const serverDurationMs = performance.now() - totalStart
 
       return {
         prediction,
         probabilities,
         gpuDurationMs: Number(backendResult.gpuDurationMs.toFixed(3)),
-        totalDurationMs: Number(totalDurationMs.toFixed(3)),
+        backendDurationMs: Number(backendResult.backendDurationMs.toFixed(3)),
+        serverDurationMs: Number(serverDurationMs.toFixed(3)),
         timingSource: backendResult.timingSource,
       }
     } catch (error) {
@@ -516,14 +518,15 @@ export class AiManager {
 
       const probabilities = softmax(backendResult.logits)
       const prediction = argmax(probabilities)
-      const totalDurationMs = performance.now() - totalStart
+      const serverDurationMs = performance.now() - totalStart
 
       return {
         prediction,
         predictionLabel: CIFAR10_LABELS[prediction] ?? 'unknown',
         probabilities,
         gpuDurationMs: Number(backendResult.gpuDurationMs.toFixed(3)),
-        totalDurationMs: Number(totalDurationMs.toFixed(3)),
+        backendDurationMs: Number(backendResult.backendDurationMs.toFixed(3)),
+        serverDurationMs: Number(serverDurationMs.toFixed(3)),
         timingSource: backendResult.timingSource,
         memoryEstimate: this.buildSingleModelMemoryEstimate('cnn'),
       }

@@ -24,6 +24,8 @@ npm run dev
 Server starts at: http://localhost:3000  
 Swagger UI:       http://localhost:3000/docs
 
+Environment variables are loaded from `.env` via `dotenv` in `src/index.ts`.
+
 Request timeout (server-side) defaults to 1 hour via `SERVER_REQUEST_TIMEOUT_MS=3600000`.
 Set `SERVER_REQUEST_TIMEOUT_MS=0` to disable request timeout completely.
 
@@ -33,6 +35,10 @@ CUDA runtime policy:
 - `CUDA_ENABLED=true`: allow CUDA path, but it still requires NVIDIA GPU + built addon.
 
 When CUDA is unavailable, `POST /matrix/multiply` with `backend: "cuda"` returns `400 cuda_unavailable`.
+
+CUDA is optional. If you only test WebGPU/CPU, you do not need to build the native C++ addon.
+Leave `CUDA_ENABLED=auto` or set `CUDA_ENABLED=false` to completely skip CUDA runtime paths.
+The CUDA addon is only required for `backend: "cuda"` calls and for CUDA-specific endpoints.
 
 ## Project Structure
 

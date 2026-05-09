@@ -16,7 +16,7 @@ Body example:
 }
 ```
 
-Response fields: `imageBase64` (RGBA), `gpuTimeMs`, `serverTimeMs`, `gpuMemoryBytes`.
+Response fields: `imageBase64` (RGBA), `gpuDurationMs`, `backendDurationMs`, `serverDurationMs`, `gpuMemoryBytes`.
 
 ## Benchmark
 

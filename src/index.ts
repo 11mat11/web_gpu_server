@@ -1,3 +1,5 @@
+import 'dotenv/config'
+
 import { buildServer } from './server.js'
 import { warmupGpu } from './gpu/device.js'
 

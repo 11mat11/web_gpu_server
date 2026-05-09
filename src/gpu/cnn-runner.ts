@@ -92,7 +92,7 @@ export interface LoadedWebGpuCnnModel {
 export interface WebGpuCnnPredictResult {
   logits: Float32Array
   gpuDurationMs: number
-  totalDurationMs: number
+  backendDurationMs: number
   timingSource: TimingSource
   memoryEstimate: CnnMemoryEstimate
 }
@@ -629,7 +629,7 @@ export async function predictWithWebGpuCnn(
     return {
       logits,
       gpuDurationMs,
-      totalDurationMs: cpuDurationMs,
+      backendDurationMs: cpuDurationMs,
       timingSource,
       memoryEstimate: model.memoryEstimate,
     }
