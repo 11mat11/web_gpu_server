@@ -11,7 +11,7 @@ import { gpuInfoRoute } from './routes/gpu-info.js';
 import { gpuStressRoute } from './routes/gpu-stress.js';
 import { imageRoute } from './routes/image.js';
 import { matrixRoute } from './routes/matrix.js';
-import { ai } from './routes/ai';
+import { ai } from './routes/ai.js';
 import { videoRoute } from './routes/video.js';
 import { renderRoute } from './routes/render.js';
 
