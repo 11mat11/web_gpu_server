@@ -78,7 +78,6 @@ fn maxPool2x2(
   let inHeight = params.p1;
   let inWidth = params.p2;
 
-  // Keep bindings 2/3 alive for layout: 'auto' in pool pipeline.
   let dummy = weightsBuf[0u] + biasBuf[0u];
   _ = dummy;
 

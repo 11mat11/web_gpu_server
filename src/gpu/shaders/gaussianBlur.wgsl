@@ -9,7 +9,6 @@ struct ImageSize {
 @group(0) @binding(1) var<storage, read>       src    : array<u32>;
 @group(0) @binding(2) var<storage, read_write> dst    : array<u32>;
 
-// 5-tap Gaussian kernel weights
 const KERNEL = array<f32, 5>(0.0625, 0.25, 0.375, 0.25, 0.0625);
 
 fn unpack(pixel: u32) -> vec4<f32> {

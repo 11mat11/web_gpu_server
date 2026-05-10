@@ -367,14 +367,12 @@ __global__ void gaussianBlurHorizontalKernel(
     const unsigned int pixel = input[y * width + sx];
     const float w = gaussianWeight(k + 2);
 
-    // Twarde wypakowanie bitów, jak w WGSL
     acc.x += static_cast<float>(pixel & 0xFFu) * w;
     acc.y += static_cast<float>((pixel >> 8u) & 0xFFu) * w;
     acc.z += static_cast<float>((pixel >> 16u) & 0xFFu) * w;
     acc.w += static_cast<float>((pixel >> 24u) & 0xFFu) * w;
   }
 
-  // Twarde pakowanie bitów z powrotem
   unsigned int r = static_cast<unsigned int>(fminf(fmaxf(roundf(acc.x), 0.0f), 255.0f));
   unsigned int g = static_cast<unsigned int>(fminf(fmaxf(roundf(acc.y), 0.0f), 255.0f));
   unsigned int b = static_cast<unsigned int>(fminf(fmaxf(roundf(acc.z), 0.0f), 255.0f));

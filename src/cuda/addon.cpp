@@ -418,7 +418,7 @@ void FreeVideoStateLocked() {
   gVideoState.gpuAllocatedBytes = 0;
 }
 
-} // namespace
+}
 
 CudaMatrixRequest ParseCudaMatrixRequest(const Napi::CallbackInfo& info) {
   if (info.Length() < 1 || !info[0].IsObject()) {

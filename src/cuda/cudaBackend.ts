@@ -1,500 +1,516 @@
-import { execFileSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import { createRequire } from 'node:module'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
-import type { VideoQuality } from '../gpu/video-runner.js'
+import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import type { VideoQuality } from '../gpu/video-runner.js';
 
-type CudaInputMode = 'random' | 'custom'
+type CudaInputMode = 'random' | 'custom';
 
 type NativeCudaResult = {
-  output: Float32Array | null
-  generationDurationMs: number | null
-  multiplyDurationMs: number
-  backendDurationMs: number
-  timingSource: 'gpu-timestamp'
-  memory: {
-    gpuAllocatedBytes: number
-    hostAllocatedBytes: number
-  }
-}
+	output: Float32Array | null;
+	generationDurationMs: number | null;
+	multiplyDurationMs: number;
+	backendDurationMs: number;
+	timingSource: 'gpu-timestamp';
+	memory: {
+		gpuAllocatedBytes: number;
+		hostAllocatedBytes: number;
+	};
+};
 
 type NativeMlpLoadResult = {
-  status: 'loaded'
-  memory: {
-    gpuAllocatedBytes: number
-    hostAllocatedBytes: number
-  }
-}
+	status: 'loaded';
+	memory: {
+		gpuAllocatedBytes: number;
+		hostAllocatedBytes: number;
+	};
+};
 
 type NativeMlpPredictResult = {
-  logits: Float32Array
-  gpuDurationMs: number
-  backendDurationMs: number
-  timingSource: 'gpu-timestamp'
-}
+	logits: Float32Array;
+	gpuDurationMs: number;
+	backendDurationMs: number;
+	timingSource: 'gpu-timestamp';
+};
 
 type NativeCnnPredictResult = {
-  logits: Float32Array
-  gpuDurationMs: number
-  backendDurationMs: number
-  timingSource: 'gpu-timestamp'
-  memory: {
-    gpuAllocatedBytes: number
-    hostAllocatedBytes: number
-  }
-}
+	logits: Float32Array;
+	gpuDurationMs: number;
+	backendDurationMs: number;
+	timingSource: 'gpu-timestamp';
+	memory: {
+		gpuAllocatedBytes: number;
+		hostAllocatedBytes: number;
+	};
+};
 
 type NativeMlpUnloadResult = {
-  status: 'unloaded'
-}
+	status: 'unloaded';
+};
 
 type NativeVideoInitResult = {
-  status: 'ready'
-  memory: CudaMemoryMetrics
-}
+	status: 'ready';
+	memory: CudaMemoryMetrics;
+};
 
 type NativeVideoFrameResult = {
-  output: Uint8Array
-  gpuDurationMs: number
-  backendDurationMs: number
-  timingSource: 'gpu-timestamp'
-  memory: CudaMemoryMetrics
-}
+	output: Uint8Array;
+	gpuDurationMs: number;
+	backendDurationMs: number;
+	timingSource: 'gpu-timestamp';
+	memory: CudaMemoryMetrics;
+};
 
 type NativeVideoHistogramResult = {
-  histogram: number[]
-  gpuDurationMs: number
-  backendDurationMs: number
-  timingSource: 'gpu-timestamp'
-  memory: CudaMemoryMetrics
-}
+	histogram: number[];
+	gpuDurationMs: number;
+	backendDurationMs: number;
+	timingSource: 'gpu-timestamp';
+	memory: CudaMemoryMetrics;
+};
 
 type NativeRenderSceneResult = {
-  output: Uint8Array
-  gpuDurationMs: number
-  backendDurationMs: number
-  timingSource: 'gpu-timestamp'
-  memory: CudaMemoryMetrics
-}
+	output: Uint8Array;
+	gpuDurationMs: number;
+	backendDurationMs: number;
+	timingSource: 'gpu-timestamp';
+	memory: CudaMemoryMetrics;
+};
 
 type NativeGaussianBlurResult = {
-  output: Uint8Array | null
-  gpuDurationMs: number
-  backendDurationMs: number
-  timingSource: 'gpu-timestamp'
-  memory: {
-    gpuAllocatedBytes: number
-    hostAllocatedBytes: number
-  }
-}
+	output: Uint8Array | null;
+	gpuDurationMs: number;
+	backendDurationMs: number;
+	timingSource: 'gpu-timestamp';
+	memory: {
+		gpuAllocatedBytes: number;
+		hostAllocatedBytes: number;
+	};
+};
 
 type NativeCudaAddon = {
-  multiplyMatrixCuda: (params: Record<string, unknown>) => Promise<NativeCudaResult>
-  loadModel: (params: Record<string, unknown>) => Promise<NativeMlpLoadResult>
-  predict: (params: Record<string, unknown>) => Promise<NativeMlpPredictResult>
-  unloadModel: () => Promise<NativeMlpUnloadResult>
-  loadCnnModel: (params: Record<string, unknown>) => Promise<NativeMlpLoadResult>
-  predictCnn: (params: Record<string, unknown>) => Promise<NativeCnnPredictResult>
-  unloadCnnModel: () => Promise<NativeMlpUnloadResult>
-  initVideoPipeline: (params: Record<string, unknown>) => Promise<NativeVideoInitResult>
-  processVideoFrame: (params: Record<string, unknown>) => Promise<NativeVideoFrameResult>
-  videoHistogram: (params: Record<string, unknown>) => Promise<NativeVideoHistogramResult>
-  unloadVideoPipeline: () => Promise<NativeMlpUnloadResult>
-  renderScene: (params: Record<string, unknown>) => Promise<NativeRenderSceneResult>
-  gaussianBlurCuda: (params: Record<string, unknown>) => Promise<NativeGaussianBlurResult>
-}
+	multiplyMatrixCuda: (params: Record<string, unknown>) => Promise<NativeCudaResult>;
+	loadModel: (params: Record<string, unknown>) => Promise<NativeMlpLoadResult>;
+	predict: (params: Record<string, unknown>) => Promise<NativeMlpPredictResult>;
+	unloadModel: () => Promise<NativeMlpUnloadResult>;
+	loadCnnModel: (params: Record<string, unknown>) => Promise<NativeMlpLoadResult>;
+	predictCnn: (params: Record<string, unknown>) => Promise<NativeCnnPredictResult>;
+	unloadCnnModel: () => Promise<NativeMlpUnloadResult>;
+	initVideoPipeline: (params: Record<string, unknown>) => Promise<NativeVideoInitResult>;
+	processVideoFrame: (params: Record<string, unknown>) => Promise<NativeVideoFrameResult>;
+	videoHistogram: (params: Record<string, unknown>) => Promise<NativeVideoHistogramResult>;
+	unloadVideoPipeline: () => Promise<NativeMlpUnloadResult>;
+	renderScene: (params: Record<string, unknown>) => Promise<NativeRenderSceneResult>;
+	gaussianBlurCuda: (params: Record<string, unknown>) => Promise<NativeGaussianBlurResult>;
+};
 
 export interface MultiplyMatrixCudaParams {
-  size: number
-  inputMode: CudaInputMode
-  optimized: boolean
-  readback?: boolean
-  randomMin?: number
-  randomMax?: number
-  randomSeed?: number
-  matrixA?: Float32Array
-  matrixB?: Float32Array
+	size: number;
+	inputMode: CudaInputMode;
+	optimized: boolean;
+	readback?: boolean;
+	randomMin?: number;
+	randomMax?: number;
+	randomSeed?: number;
+	matrixA?: Float32Array;
+	matrixB?: Float32Array;
 }
 
 export interface MultiplyMatrixCudaResult {
-  output: Float32Array | null
-  generationDurationMs: number | null
-  multiplyDurationMs: number
-  backendDurationMs: number
-  timingSource: 'gpu-timestamp'
-  memory: CudaMemoryMetrics
+	output: Float32Array | null;
+	generationDurationMs: number | null;
+	multiplyDurationMs: number;
+	backendDurationMs: number;
+	timingSource: 'gpu-timestamp';
+	memory: CudaMemoryMetrics;
 }
 
 export interface CudaRuntimeState {
-  enabled: boolean
-  reason: string
+	enabled: boolean;
+	reason: string;
 }
 
 export interface CudaMemoryMetrics {
-  gpuAllocatedBytes: number
-  hostAllocatedBytes: number
+	gpuAllocatedBytes: number;
+	hostAllocatedBytes: number;
 }
 
 export interface CudaMlpLoadResult {
-  status: 'loaded'
-  memory: CudaMemoryMetrics
+	status: 'loaded';
+	memory: CudaMemoryMetrics;
 }
 
 export interface CudaMlpPredictResult {
-  logits: Float32Array
-  gpuDurationMs: number
-  backendDurationMs: number
-  timingSource: 'gpu-timestamp'
+	logits: Float32Array;
+	gpuDurationMs: number;
+	backendDurationMs: number;
+	timingSource: 'gpu-timestamp';
 }
 
 export interface CudaCnnPredictResult {
-  logits: Float32Array
-  gpuDurationMs: number
-  backendDurationMs: number
-  timingSource: 'gpu-timestamp'
-  memory: CudaMemoryMetrics
+	logits: Float32Array;
+	gpuDurationMs: number;
+	backendDurationMs: number;
+	timingSource: 'gpu-timestamp';
+	memory: CudaMemoryMetrics;
 }
 
 export interface CudaMlpUnloadResult {
-  status: 'unloaded'
+	status: 'unloaded';
 }
 
 export interface CudaVideoInitParams {
-  srcWidth: number
-  srcHeight: number
-  dstWidth: number
-  dstHeight: number
+	srcWidth: number;
+	srcHeight: number;
+	dstWidth: number;
+	dstHeight: number;
 }
 
 export interface CudaVideoInitResult {
-  status: 'ready'
-  memory: CudaMemoryMetrics
+	status: 'ready';
+	memory: CudaMemoryMetrics;
 }
 
 export interface CudaVideoFrameResult {
-  rgba: Buffer
-  gpuDurationMs: number
-  backendDurationMs: number
-  timingSource: 'gpu-timestamp'
-  memory: CudaMemoryMetrics
+	rgba: Buffer;
+	gpuDurationMs: number;
+	backendDurationMs: number;
+	timingSource: 'gpu-timestamp';
+	memory: CudaMemoryMetrics;
 }
 
 export interface CudaVideoHistogramResult {
-  histogram: number[]
-  gpuDurationMs: number
-  backendDurationMs: number
-  timingSource: 'gpu-timestamp'
-  memory: CudaMemoryMetrics
+	histogram: number[];
+	gpuDurationMs: number;
+	backendDurationMs: number;
+	timingSource: 'gpu-timestamp';
+	memory: CudaMemoryMetrics;
 }
 
 export interface CudaRenderSceneResult {
-  rgba: Buffer
-  gpuDurationMs: number
-  backendDurationMs: number
-  timingSource: 'gpu-timestamp'
-  memory: CudaMemoryMetrics
-  width: number
-  height: number
+	rgba: Buffer;
+	gpuDurationMs: number;
+	backendDurationMs: number;
+	timingSource: 'gpu-timestamp';
+	memory: CudaMemoryMetrics;
+	width: number;
+	height: number;
 }
 
 export interface CudaGaussianBlurParams {
-  width: number
-  height: number
-  input: Uint8Array
-  readback?: boolean
+	width: number;
+	height: number;
+	input: Uint8Array;
+	readback?: boolean;
 }
 
 export interface CudaGaussianBlurResult {
-  output: Buffer | null
-  gpuDurationMs: number
-  backendDurationMs: number
-  timingSource: 'gpu-timestamp'
-  memory: CudaMemoryMetrics
+	output: Buffer | null;
+	gpuDurationMs: number;
+	backendDurationMs: number;
+	timingSource: 'gpu-timestamp';
+	memory: CudaMemoryMetrics;
 }
 
-let cachedAddon: NativeCudaAddon | null = null
-let cachedRuntimeState: CudaRuntimeState | null = null
+let cachedAddon: NativeCudaAddon | null = null;
+let cachedRuntimeState: CudaRuntimeState | null = null;
 
 function parseBooleanEnv(raw: string | undefined): boolean | null {
-  if (raw === undefined) {
-    return null
-  }
+	if (raw === undefined) {
+		return null;
+	}
 
-  const normalized = raw.trim().toLowerCase()
-  if (normalized === 'auto') {
-    return null
-  }
+	const normalized = raw.trim().toLowerCase();
+	if (normalized === 'auto') {
+		return null;
+	}
 
-  if (['1', 'true', 'yes', 'on'].includes(normalized)) {
-    return true
-  }
-  if (['0', 'false', 'no', 'off'].includes(normalized)) {
-    return false
-  }
+	if (['1', 'true', 'yes', 'on'].includes(normalized)) {
+		return true;
+	}
+	if (['0', 'false', 'no', 'off'].includes(normalized)) {
+		return false;
+	}
 
-  console.warn(`[CUDA] Ignoring invalid CUDA_ENABLED value: "${raw}". Use true/false.`)
-  return null
+	console.warn(`[CUDA] Ignoring invalid CUDA_ENABLED value: "${raw}". Use true/false.`);
+	return null;
 }
 
 function hasNvidiaGpu(): boolean {
-  try {
-    const output = execFileSync('nvidia-smi', ['--query-gpu=name', '--format=csv,noheader'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      timeout: 2000,
-    }).trim()
+	try {
+		const output = execFileSync('nvidia-smi', ['--query-gpu=name', '--format=csv,noheader'], {
+			encoding: 'utf8',
+			stdio: ['ignore', 'pipe', 'ignore'],
+			timeout: 2000,
+		}).trim();
 
-    return output.length > 0
-  } catch {
-    return false
-  }
+		return output.length > 0;
+	} catch {
+		return false;
+	}
 }
 
 function getSeed(seed?: number): number {
-  if (typeof seed === 'number' && Number.isFinite(seed)) {
-    return seed >>> 0
-  }
-  const coarse = Date.now() >>> 0
-  const fine = Number(process.hrtime.bigint() & 0xffffffffn) >>> 0
-  return (coarse ^ fine) >>> 0
+	if (typeof seed === 'number' && Number.isFinite(seed)) {
+		return seed >>> 0;
+	}
+	const coarse = Date.now() >>> 0;
+	const fine = Number(process.hrtime.bigint() & 0xffffffffn) >>> 0;
+	return (coarse ^ fine) >>> 0;
 }
 
 function resolveAddonPath(): string | null {
-  const currentFilePath = fileURLToPath(import.meta.url)
-  const rootDir = path.resolve(path.dirname(currentFilePath), '..', '..')
-  const releasePath = path.join(rootDir, 'build', 'Release', 'cuda_matrix_addon.node')
-  if (existsSync(releasePath)) {
-    return releasePath
-  }
+	const currentFilePath = fileURLToPath(import.meta.url);
+	const rootDir = path.resolve(path.dirname(currentFilePath), '..', '..');
+	const releasePath = path.join(rootDir, 'build', 'Release', 'cuda_matrix_addon.node');
+	if (existsSync(releasePath)) {
+		return releasePath;
+	}
 
-  const debugPath = path.join(rootDir, 'build', 'Debug', 'cuda_matrix_addon.node')
-  if (existsSync(debugPath)) {
-    return debugPath
-  }
+	const debugPath = path.join(rootDir, 'build', 'Debug', 'cuda_matrix_addon.node');
+	if (existsSync(debugPath)) {
+		return debugPath;
+	}
 
-  return null
+	return null;
 }
 
 export function getCudaRuntimeState(): CudaRuntimeState {
-  if (cachedRuntimeState) {
-    return cachedRuntimeState
-  }
+	if (cachedRuntimeState) {
+		return cachedRuntimeState;
+	}
 
-  const envEnabled = parseBooleanEnv(process.env.CUDA_ENABLED)
-  if (envEnabled === false) {
-    cachedRuntimeState = {
-      enabled: false,
-      reason: 'disabled by CUDA_ENABLED=false',
-    }
-    return cachedRuntimeState
-  }
+	const envEnabled = parseBooleanEnv(process.env.CUDA_ENABLED);
+	if (envEnabled === false) {
+		cachedRuntimeState = {
+			enabled: false,
+			reason: 'disabled by CUDA_ENABLED=false',
+		};
+		return cachedRuntimeState;
+	}
 
-  if (!hasNvidiaGpu()) {
-    cachedRuntimeState = {
-      enabled: false,
-      reason: 'no NVIDIA GPU detected (nvidia-smi unavailable or no devices)',
-    }
-    return cachedRuntimeState
-  }
+	if (!hasNvidiaGpu()) {
+		cachedRuntimeState = {
+			enabled: false,
+			reason: 'no NVIDIA GPU detected (nvidia-smi unavailable or no devices)',
+		};
+		return cachedRuntimeState;
+	}
 
-  const addonPath = resolveAddonPath()
-  if (!addonPath) {
-    cachedRuntimeState = {
-      enabled: false,
-      reason: 'CUDA addon not built (missing build/Release|Debug/cuda_matrix_addon.node)',
-    }
-    return cachedRuntimeState
-  }
+	const addonPath = resolveAddonPath();
+	if (!addonPath) {
+		cachedRuntimeState = {
+			enabled: false,
+			reason: 'CUDA addon not built (missing build/Release|Debug/cuda_matrix_addon.node)',
+		};
+		return cachedRuntimeState;
+	}
 
-  cachedRuntimeState = {
-    enabled: true,
-    reason: envEnabled === true ? 'enabled by CUDA_ENABLED=true' : 'enabled (auto-detected NVIDIA + addon present)',
-  }
-  return cachedRuntimeState
+	cachedRuntimeState = {
+		enabled: true,
+		reason:
+			envEnabled === true
+				? 'enabled by CUDA_ENABLED=true'
+				: 'enabled (auto-detected NVIDIA + addon present)',
+	};
+	return cachedRuntimeState;
 }
 
 function getAddon(): NativeCudaAddon {
-  if (cachedAddon) {
-    return cachedAddon
-  }
+	if (cachedAddon) {
+		return cachedAddon;
+	}
 
-  const state = getCudaRuntimeState()
-  if (!state.enabled) {
-    throw new Error(`CUDA backend is unavailable: ${state.reason}`)
-  }
+	const state = getCudaRuntimeState();
+	if (!state.enabled) {
+		throw new Error(`CUDA backend is unavailable: ${state.reason}`);
+	}
 
-  const require = createRequire(import.meta.url)
-  const addonPath = resolveAddonPath()
-  if (!addonPath) {
-    throw new Error('CUDA addon path could not be resolved at runtime.')
-  }
-  cachedAddon = require(addonPath) as NativeCudaAddon
-  return cachedAddon
+	const require = createRequire(import.meta.url);
+	const addonPath = resolveAddonPath();
+	if (!addonPath) {
+		throw new Error('CUDA addon path could not be resolved at runtime.');
+	}
+	cachedAddon = require(addonPath) as NativeCudaAddon;
+	return cachedAddon;
 }
 
-export async function multiplyMatrixCuda(params: MultiplyMatrixCudaParams): Promise<MultiplyMatrixCudaResult> {
-  const addon = getAddon()
+export async function multiplyMatrixCuda(
+	params: MultiplyMatrixCudaParams,
+): Promise<MultiplyMatrixCudaResult> {
+	const addon = getAddon();
 
-  const request: Record<string, unknown> = {
-    size: params.size,
-    inputMode: params.inputMode,
-    optimized: params.optimized,
-    readback: params.readback ?? true,
-    randomMin: params.randomMin ?? 0,
-    randomMax: params.randomMax ?? 1,
-  }
+	const request: Record<string, unknown> = {
+		size: params.size,
+		inputMode: params.inputMode,
+		optimized: params.optimized,
+		readback: params.readback ?? true,
+		randomMin: params.randomMin ?? 0,
+		randomMax: params.randomMax ?? 1,
+	};
 
-  if (params.inputMode === 'random') {
-    request.randomSeed = getSeed(params.randomSeed)
-  }
+	if (params.inputMode === 'random') {
+		request.randomSeed = getSeed(params.randomSeed);
+	}
 
-  if (params.inputMode === 'custom') {
-    if (!params.matrixA || !params.matrixB) {
-      throw new Error('Custom CUDA mode requires matrixA and matrixB.')
-    }
-    request.matrixA = params.matrixA
-    request.matrixB = params.matrixB
-  }
+	if (params.inputMode === 'custom') {
+		if (!params.matrixA || !params.matrixB) {
+			throw new Error('Custom CUDA mode requires matrixA and matrixB.');
+		}
+		request.matrixA = params.matrixA;
+		request.matrixB = params.matrixB;
+	}
 
-  const result = await addon.multiplyMatrixCuda(request)
-  return {
-    output: result.output,
-    generationDurationMs: result.generationDurationMs,
-    multiplyDurationMs: result.multiplyDurationMs,
-    backendDurationMs: result.backendDurationMs,
-    timingSource: result.timingSource,
-    memory: result.memory,
-  }
+	const result = await addon.multiplyMatrixCuda(request);
+	return {
+		output: result.output,
+		generationDurationMs: result.generationDurationMs,
+		multiplyDurationMs: result.multiplyDurationMs,
+		backendDurationMs: result.backendDurationMs,
+		timingSource: result.timingSource,
+		memory: result.memory,
+	};
 }
 
 export async function loadModelCuda(weights: Float32Array): Promise<CudaMlpLoadResult> {
-  const addon = getAddon()
-  const result = await addon.loadModel({ weights })
-  return {
-    status: result.status,
-    memory: result.memory,
-  }
+	const addon = getAddon();
+	const result = await addon.loadModel({ weights });
+	return {
+		status: result.status,
+		memory: result.memory,
+	};
 }
 
 export async function predictMlpCuda(input: Float32Array): Promise<CudaMlpPredictResult> {
-  const addon = getAddon()
-  const result = await addon.predict({ input })
-  return {
-    logits: result.logits,
-    gpuDurationMs: result.gpuDurationMs,
-    backendDurationMs: result.backendDurationMs,
-    timingSource: result.timingSource,
-  }
+	const addon = getAddon();
+	const result = await addon.predict({ input });
+	return {
+		logits: result.logits,
+		gpuDurationMs: result.gpuDurationMs,
+		backendDurationMs: result.backendDurationMs,
+		timingSource: result.timingSource,
+	};
 }
 
 export async function unloadModelCuda(): Promise<CudaMlpUnloadResult> {
-  const addon = getAddon()
-  const result = await addon.unloadModel()
-  return {
-    status: result.status,
-  }
+	const addon = getAddon();
+	const result = await addon.unloadModel();
+	return {
+		status: result.status,
+	};
 }
 
 export async function loadCnnModelCuda(weights: Float32Array): Promise<CudaMlpLoadResult> {
-  const addon = getAddon()
-  const result = await addon.loadCnnModel({ weights })
-  return {
-    status: result.status,
-    memory: result.memory,
-  }
+	const addon = getAddon();
+	const result = await addon.loadCnnModel({ weights });
+	return {
+		status: result.status,
+		memory: result.memory,
+	};
 }
 
 export async function predictCnnCuda(input: Float32Array): Promise<CudaCnnPredictResult> {
-  const addon = getAddon()
-  const result = await addon.predictCnn({ input })
-  return {
-    logits: result.logits,
-    gpuDurationMs: result.gpuDurationMs,
-    backendDurationMs: result.backendDurationMs,
-    timingSource: result.timingSource,
-    memory: result.memory,
-  }
+	const addon = getAddon();
+	const result = await addon.predictCnn({ input });
+	return {
+		logits: result.logits,
+		gpuDurationMs: result.gpuDurationMs,
+		backendDurationMs: result.backendDurationMs,
+		timingSource: result.timingSource,
+		memory: result.memory,
+	};
 }
 
 export async function unloadCnnModelCuda(): Promise<CudaMlpUnloadResult> {
-  const addon = getAddon()
-  const result = await addon.unloadCnnModel()
-  return {
-    status: result.status,
-  }
+	const addon = getAddon();
+	const result = await addon.unloadCnnModel();
+	return {
+		status: result.status,
+	};
 }
 
-export async function initVideoPipelineCuda(params: CudaVideoInitParams): Promise<CudaVideoInitResult> {
-  const addon = getAddon()
-  const result = await addon.initVideoPipeline({ ...params })
-  return {
-    status: result.status,
-    memory: result.memory,
-  }
+export async function initVideoPipelineCuda(
+	params: CudaVideoInitParams,
+): Promise<CudaVideoInitResult> {
+	const addon = getAddon();
+	const result = await addon.initVideoPipeline({ ...params });
+	return {
+		status: result.status,
+		memory: result.memory,
+	};
 }
 
-export async function processVideoFrameCuda(input: Uint8Array, quality: VideoQuality): Promise<CudaVideoFrameResult> {
-  const addon = getAddon()
-  const result = await addon.processVideoFrame({ input, quality })
-  return {
-    rgba: Buffer.from(result.output),
-    gpuDurationMs: result.gpuDurationMs,
-    backendDurationMs: result.backendDurationMs,
-    timingSource: result.timingSource,
-    memory: result.memory,
-  }
+export async function processVideoFrameCuda(
+	input: Uint8Array,
+	quality: VideoQuality,
+): Promise<CudaVideoFrameResult> {
+	const addon = getAddon();
+	const result = await addon.processVideoFrame({ input, quality });
+	return {
+		rgba: Buffer.from(result.output),
+		gpuDurationMs: result.gpuDurationMs,
+		backendDurationMs: result.backendDurationMs,
+		timingSource: result.timingSource,
+		memory: result.memory,
+	};
 }
 
 export async function unloadVideoPipelineCuda(): Promise<CudaMlpUnloadResult> {
-  const addon = getAddon()
-  const result = await addon.unloadVideoPipeline()
-  return {
-    status: result.status,
-  }
+	const addon = getAddon();
+	const result = await addon.unloadVideoPipeline();
+	return {
+		status: result.status,
+	};
 }
 
 export async function computeHistogramCuda(input: Uint8Array): Promise<CudaVideoHistogramResult> {
-  const addon = getAddon()
-  const result = await addon.videoHistogram({ input })
-  return {
-    histogram: result.histogram,
-    gpuDurationMs: result.gpuDurationMs,
-    backendDurationMs: result.backendDurationMs,
-    timingSource: result.timingSource,
-    memory: result.memory,
-  }
+	const addon = getAddon();
+	const result = await addon.videoHistogram({ input });
+	return {
+		histogram: result.histogram,
+		gpuDurationMs: result.gpuDurationMs,
+		backendDurationMs: result.backendDurationMs,
+		timingSource: result.timingSource,
+		memory: result.memory,
+	};
 }
 
-export async function renderSceneCuda(shapes: Float32Array, count: number, width = 1920, height = 1080): Promise<CudaRenderSceneResult> {
-  const addon = getAddon()
-  const result = await addon.renderScene({ shapes, count, width, height })
-  return {
-    rgba: Buffer.from(result.output),
-    gpuDurationMs: result.gpuDurationMs,
-    backendDurationMs: result.backendDurationMs,
-    timingSource: result.timingSource,
-    memory: result.memory,
-    width,
-    height,
-  }
+export async function renderSceneCuda(
+	shapes: Float32Array,
+	count: number,
+	width = 1920,
+	height = 1080,
+): Promise<CudaRenderSceneResult> {
+	const addon = getAddon();
+	const result = await addon.renderScene({ shapes, count, width, height });
+	return {
+		rgba: Buffer.from(result.output),
+		gpuDurationMs: result.gpuDurationMs,
+		backendDurationMs: result.backendDurationMs,
+		timingSource: result.timingSource,
+		memory: result.memory,
+		width,
+		height,
+	};
 }
 
-export async function gaussianBlurCuda(params: CudaGaussianBlurParams): Promise<CudaGaussianBlurResult> {
-  const addon = getAddon()
-  const result = await addon.gaussianBlurCuda({
-    width: params.width,
-    height: params.height,
-    input: params.input,
-    readback: params.readback ?? false,
-  })
+export async function gaussianBlurCuda(
+	params: CudaGaussianBlurParams,
+): Promise<CudaGaussianBlurResult> {
+	const addon = getAddon();
+	const result = await addon.gaussianBlurCuda({
+		width: params.width,
+		height: params.height,
+		input: params.input,
+		readback: params.readback ?? false,
+	});
 
-  return {
-    output: result.output ? Buffer.from(result.output) : null,
-    gpuDurationMs: result.gpuDurationMs,
-    backendDurationMs: result.backendDurationMs,
-    timingSource: result.timingSource,
-    memory: result.memory,
-  }
+	return {
+		output: result.output ? Buffer.from(result.output) : null,
+		gpuDurationMs: result.gpuDurationMs,
+		backendDurationMs: result.backendDurationMs,
+		timingSource: result.timingSource,
+		memory: result.memory,
+	};
 }
-

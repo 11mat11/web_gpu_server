@@ -90,7 +90,6 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
       if (dist <= 0.0f && depth < bestDepth) {
         bestDepth = depth;
-        // Odczytujemy kolory dopiero tu!
         bestColor = vec4<f32>(shapes[i].r, shapes[i].g, shapes[i].b, shapes[i].a);
       }
 

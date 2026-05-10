@@ -10,12 +10,12 @@
 #include <vector>
 
 #include "matrix_kernels.h"
-#define CUDA_CHECK_THROW(call)                                                                                          \
-  do {                                                                                                                  \
-    const cudaError_t cudaStatus = (call);                                                                             \
-    if (cudaStatus != cudaSuccess) {                                                                                   \
-      throw std::runtime_error(std::string("CUDA error in ") + #call + ": " + cudaGetErrorString(cudaStatus));      \
-    }                                                                                                                   \
+#define CUDA_CHECK_THROW(call)
+  do {
+    const cudaError_t cudaStatus = (call);
+    if (cudaStatus != cudaSuccess) {
+      throw std::runtime_error(std::string("CUDA error in ") + #call + ": " + cudaGetErrorString(cudaStatus));
+    }
   } while (0)
 
 struct CudaMatrixRequest {

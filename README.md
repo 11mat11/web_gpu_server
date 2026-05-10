@@ -22,7 +22,7 @@ npm run dev
 ```
 
 Server starts at: http://localhost:3000  
-Swagger UI:       http://localhost:3000/docs
+Swagger UI: http://localhost:3000/docs
 
 Environment variables are loaded from `.env` via `dotenv` in `src/index.ts`.
 
@@ -30,6 +30,7 @@ Request timeout (server-side) defaults to 1 hour via `SERVER_REQUEST_TIMEOUT_MS=
 Set `SERVER_REQUEST_TIMEOUT_MS=0` to disable request timeout completely.
 
 CUDA runtime policy:
+
 - `CUDA_ENABLED=auto` (default): CUDA is enabled only when NVIDIA GPU is detected and native addon exists.
 - `CUDA_ENABLED=false`: hard-disable CUDA backend (no C++ addon loading).
 - `CUDA_ENABLED=true`: allow CUDA path, but it still requires NVIDIA GPU + built addon.
@@ -67,22 +68,22 @@ src/
 
 ## API Endpoints
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | /health | Server health |
-| GET | /gpu/info | GPU adapter info |
-| POST | /image/filter | Run image filter |
-| POST | /matrix/multiply | Run matrix multiply |
-| POST | /benchmark/start | Start benchmark job |
-| GET | /ai/status | AI status for models (`mlp`, `cnn`) and backends |
-| POST | /ai/load | Load selected model (`mlp`/`cnn`) or both |
-| POST | /ai/predict/mlp | Run MLP inference on `webgpu` or `cuda` |
-| POST | /ai/predict/cnn | Run Mini-VGG CNN inference on `webgpu` or `cuda` |
-| POST | /ai/unload | Unload selected model (`mlp`/`cnn`) or both |
-| POST | /render | Procedural SDF scene renderer (webgpu-render/webgpu-compute/cuda) |
-| GET | /benchmark/status/:id | Poll job status |
-| GET | /benchmark/results | All results |
-| DELETE | /benchmark/results | Clear results |
+| Method | Path                  | Description                                                       |
+| ------ | --------------------- | ----------------------------------------------------------------- |
+| GET    | /health               | Server health                                                     |
+| GET    | /gpu/info             | GPU adapter info                                                  |
+| POST   | /image/filter         | Run image filter                                                  |
+| POST   | /matrix/multiply      | Run matrix multiply                                               |
+| POST   | /benchmark/start      | Start benchmark job                                               |
+| GET    | /ai/status            | AI status for models (`mlp`, `cnn`) and backends                  |
+| POST   | /ai/load              | Load selected model (`mlp`/`cnn`) or both                         |
+| POST   | /ai/predict/mlp       | Run MLP inference on `webgpu` or `cuda`                           |
+| POST   | /ai/predict/cnn       | Run Mini-VGG CNN inference on `webgpu` or `cuda`                  |
+| POST   | /ai/unload            | Unload selected model (`mlp`/`cnn`) or both                       |
+| POST   | /render               | Procedural SDF scene renderer (webgpu-render/webgpu-compute/cuda) |
+| GET    | /benchmark/status/:id | Poll job status                                                   |
+| GET    | /benchmark/results    | All results                                                       |
+| DELETE | /benchmark/results    | Clear results                                                     |
 
 ## Matrix Multiply (`POST /matrix/multiply`)
 
@@ -143,9 +144,9 @@ Response includes measured `processMemory` (`before`, `after`) from `process.mem
 
 ```json
 {
-  "model": "cnn",
-  "webgpu": true,
-  "cuda": false
+	"model": "cnn",
+	"webgpu": true,
+	"cuda": false
 }
 ```
 
@@ -161,8 +162,8 @@ Wagi:
 
 ```json
 {
-  "backend": "cuda",
-  "input": [0.0, 0.1, 0.2]
+	"backend": "cuda",
+	"input": [0.0, 0.1, 0.2]
 }
 ```
 

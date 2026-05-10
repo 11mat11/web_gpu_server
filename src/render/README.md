@@ -23,4 +23,3 @@ Response fields: `imageBase64` (RGBA), `gpuDurationMs`, `backendDurationMs`, `se
 ```
 npm run render:bench -- --backend=webgpu-render --seed=1234 --count=2000
 ```
-

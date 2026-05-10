@@ -45,7 +45,6 @@ fn main(
   var x0: i32 = i32(floor(srcX));
   var y0: i32 = i32(floor(srcY));
 
-  // POPRAWKA: Używamy czystych liczb (0, 1) zamiast (0i, 1i)
   x0 = clamp(x0, 0, i32(params.srcWidth) - 1);
   y0 = clamp(y0, 0, i32(params.srcHeight) - 1);
 
