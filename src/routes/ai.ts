@@ -6,7 +6,7 @@ import {
 	predictCnnHandler,
 	predictMlpHandler,
 	unloadAiModelHandler,
-} from '../ai/aicontroller';
+} from '../ai/aicontroller.js';
 
 const aiErrorSchema = {
 	type: 'object',
