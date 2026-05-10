@@ -3,7 +3,8 @@ import cors from '@fastify/cors'
 import swagger from '@fastify/swagger'
 import swaggerUi from '@fastify/swagger-ui'
 import websocket from '@fastify/websocket'
-
+import { readFileSync, existsSync } from 'node:fs'
+import path from 'node:path'
 import './zod-extensions.js'
 
 import { healthRoute } from './routes/health.js'
@@ -35,7 +36,11 @@ function getRequestTimeoutMs(): number {
 export async function buildServer() {
   const requestTimeoutMs = getRequestTimeoutMs()
 
-  const server = Fastify({
+  const keyPath = path.resolve(process.cwd(), 'server.key')
+  const certPath = path.resolve(process.cwd(), 'server.cert')
+  const useHttps = existsSync(keyPath) && existsSync(certPath)
+
+  const serverOptions: any = {
     requestTimeout: requestTimeoutMs,
     bodyLimit: 50 * 1024 * 1024,
     logger: {
@@ -44,7 +49,17 @@ export async function buildServer() {
               ? { target: 'pino-pretty', options: { colorize: true } }
               : undefined,
     },
-  })
+  }
+
+  // 3. Jeśli klucze istnieją, dodajemy konfigurację HTTPS
+  if (useHttps) {
+    serverOptions.https = {
+      key: readFileSync(keyPath),
+      cert: readFileSync(certPath),
+    }
+  }
+
+  const server = Fastify(serverOptions)
 
   // ─── Plugins ────────────────────────────────────────────────────────────────
   await server.register(cors, {

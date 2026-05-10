@@ -4,7 +4,8 @@ import { z } from 'zod'
 import { renderSceneWebGpuCompute, renderSceneWebGpuRender } from '../gpu/render-runner.js'
 import { generateScene } from '../render/scene.js'
 import { getCudaRuntimeState, renderSceneCuda } from '../cuda/cudaBackend.js'
-
+type WithMemory = { memory: { gpuAllocatedBytes: number } };
+type WithGpuBytes = { gpuMemoryBytes: number };
 const BackendSchema = z.enum(['webgpu-render', 'webgpu-compute', 'cuda'])
   .describe('Backend renderowania sceny SDF (render pipeline vs compute vs CUDA).')
   .example('webgpu-render')
@@ -117,7 +118,10 @@ export async function renderRoute(server: FastifyInstance) {
         const { seed, count, backend } = parsed.data
         const shapes = generateScene(seed, count)
 
-        let result: any
+        let result:
+            | Awaited<ReturnType<typeof renderSceneWebGpuRender>>
+            | Awaited<ReturnType<typeof renderSceneWebGpuCompute>>
+            | Awaited<ReturnType<typeof renderSceneCuda>>
 
         if (backend === 'webgpu-render') {
           result = await renderSceneWebGpuRender(shapes, count)
@@ -136,7 +140,7 @@ export async function renderRoute(server: FastifyInstance) {
 
         const serverDurationMs = performance.now() - startedAt
         const memory: z.infer<typeof MemorySchema> = {
-          gpuBytes: 'memory' in result ? result.memory.gpuAllocatedBytes : result.gpuMemoryBytes,
+          gpuBytes: 'memory' in result ? (result as WithMemory).memory.gpuAllocatedBytes : (result as WithGpuBytes).gpuMemoryBytes,
           hostBytes: shapes.byteLength + result.rgba.byteLength,
           serverRssBytes: process.memoryUsage().rss,
         }

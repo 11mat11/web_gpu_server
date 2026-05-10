@@ -21,7 +21,8 @@ import {
 import { VideoManager } from '../video/VideoManager.js'
 
 type StreamBackend = 'webgpu' | 'cuda'
-
+type WithMemory = { memory: { gpuAllocatedBytes: number } };
+type WithGpuBytes = { gpuMemoryBytes: number };
 const SelectSchema = z
   .object({
     action: z.literal('select').describe('Akcja wyboru źródła wideo.').example('select'),
@@ -117,6 +118,7 @@ export async function videoRoute(server: FastifyInstance) {
               gpuDurationMs: { type: 'number' },
               backendDurationMs: { type: 'number' },
               serverDurationMs: { type: 'number' },
+              timingSource: { type: 'string', enum: ['gpu-timestamp', 'cpu-clock'] },
               backend: { type: 'string', enum: ['webgpu', 'cuda'] },
               memory: {
                 type: 'object',
@@ -186,6 +188,7 @@ export async function videoRoute(server: FastifyInstance) {
           gpuDurationMs: Number(result.gpuDurationMs.toFixed(3)),
           backendDurationMs: Number(result.backendDurationMs.toFixed(3)),
           serverDurationMs: Number(serverDurationMs.toFixed(3)),
+          timingSource: result.timingSource,
           backend: parsed.data.backend,
           memory,
         })
@@ -334,7 +337,7 @@ export async function videoRoute(server: FastifyInstance) {
             timingSource = result.timingSource
             width = result.width
             height = result.height
-            gpuBytes = 'memory' in result ? (result as any).memory.gpuAllocatedBytes : (result as any).gpuMemoryBytes
+            gpuBytes = 'memory' in result ? (result as WithMemory).memory.gpuAllocatedBytes : (result as WithGpuBytes).gpuMemoryBytes;
           } else {
             const result = await processVideoFrameCuda(sourceFrame, selectedQuality)
             rgba = result.rgba
@@ -351,7 +354,7 @@ export async function videoRoute(server: FastifyInstance) {
               width = videoLayout.dstWidth160
               height = videoLayout.dstHeight160
             }
-            gpuBytes = result.memory.gpuAllocatedBytes
+            gpuBytes = 'memory' in result ? (result as WithMemory).memory.gpuAllocatedBytes : (result as WithGpuBytes).gpuMemoryBytes
           }
         }
 
