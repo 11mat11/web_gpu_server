@@ -1,0 +1,14 @@
+---
+# Włączamy reguły szukające bugów, wymuszające nowoczesny kod C++, dbające o wydajność i czytelność
+Checks: '-*,bugprone-*,modernize-*,performance-*,readability-*,cppcoreguidelines-*,-modernize-use-trailing-return-type,-cppcoreguidelines-pro-bounds-pointer-arithmetic'
+
+# Pliki nagłówkowe, które mają być sprawdzane
+HeaderFilterRegex: '.*'
+
+# Konfiguracja konkretnych reguł
+CheckOptions:
+  - key:             readability-identifier-naming.VariableCase
+    value:           camelBack
+  - key:             readability-identifier-naming.FunctionCase
+    value:           camelBack
+...

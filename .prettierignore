@@ -1,0 +1,16 @@
+# Foldery z kompilacją i paczkami (nigdy tego nie dotykamy)
+node_modules/
+dist/
+build/
+
+# Zablokowane pliki specyficzne
+package-lock.json
+*.key
+*.cert
+
+# Kod natywny (C++ / CUDA) - Prettier tego nie rozumie
+*.cpp
+*.h
+*.cu
+binding.gyp
+.bin

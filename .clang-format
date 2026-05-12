@@ -1,0 +1,7 @@
+BasedOnStyle: Google
+IndentWidth: 4
+UseTab: Always
+ColumnLimit: 100
+AllowShortIfStatementsOnASingleLine: false
+IndentCaseLabels: true
+PointerAlignment: Left
