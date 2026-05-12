@@ -1,8 +1,8 @@
 struct GemvParams {
-  inputSize: u32,
-  outputSize: u32,
-  applyRelu: u32,
-  _pad: u32,
+	inputSize: u32,
+	outputSize: u32,
+	applyRelu: u32,
+	_pad: u32,
 }
 
 @group(0) @binding(0) var<uniform> params: GemvParams;
@@ -16,74 +16,73 @@ var<workgroup> partialSums: array<f32, 256>;
 
 @compute @workgroup_size(256)
 fn main(
-  @builtin(workgroup_id) workgroupId: vec3<u32>,
-  @builtin(local_invocation_id) localId: vec3<u32>,
+	@builtin(workgroup_id) workgroupId: vec3<u32>,
+	@builtin(local_invocation_id) localId: vec3<u32>,
 ) {
-  let outputIndex = workgroupId.x;
-  let lane = localId.x;
+	let outputIndex = workgroupId.x;
+	let lane = localId.x;
 
-  if (outputIndex >= params.outputSize) {
-    return;
-  }
+	if (outputIndex >= params.outputSize) {
+		return;
+	}
 
-  var localSum = 0.0;
-  let tileSize: u32 = 256u;
+	var localSum = 0.0;
+	let tileSize: u32 = 256u;
 
-  var base: u32 = 0u;
-  loop {
-    if (base >= params.inputSize) {
-      break;
-    }
+	var base: u32 = 0u;
+	loop {
+		if (base >= params.inputSize) {
+			break;
+		}
 
-    let inputIndex = base + lane;
-    if (inputIndex < params.inputSize) {
-      inputTile[lane] = inputVec[inputIndex];
-    } else {
-      inputTile[lane] = 0.0;
-    }
-    workgroupBarrier();
+		let inputIndex = base + lane;
+		if (inputIndex < params.inputSize) {
+			inputTile[lane] = inputVec[inputIndex];
+		} else {
+			inputTile[lane] = 0.0;
+		}
+		workgroupBarrier();
 
-    let remaining = params.inputSize - base;
-    let currentTileSize = min(tileSize, remaining);
+		let remaining = params.inputSize - base;
+		let currentTileSize = min(tileSize, remaining);
 
-    var k = lane;
-    loop {
-      if (k >= currentTileSize) {
-        break;
-      }
+		var k = lane;
+		loop {
+			if (k >= currentTileSize) {
+				break;
+			}
 
-      let weightIndex = (base + k) * params.outputSize + outputIndex;
-      localSum = localSum + inputTile[k] * weights[weightIndex];
-      k = k + tileSize;
-    }
+			let weightIndex = (base + k) * params.outputSize + outputIndex;
+			localSum = localSum + inputTile[k] * weights[weightIndex];
+			k = k + tileSize;
+		}
 
-    workgroupBarrier();
-    base = base + tileSize;
-  }
+		workgroupBarrier();
+		base = base + tileSize;
+	}
 
-  partialSums[lane] = localSum;
-  workgroupBarrier();
+	partialSums[lane] = localSum;
+	workgroupBarrier();
 
-  var stride: u32 = tileSize / 2u;
-  loop {
-    if (stride == 0u) {
-      break;
-    }
+	var stride: u32 = tileSize / 2u;
+	loop {
+		if (stride == 0u) {
+			break;
+		}
 
-    if (lane < stride) {
-      partialSums[lane] = partialSums[lane] + partialSums[lane + stride];
-    }
+		if (lane < stride) {
+			partialSums[lane] = partialSums[lane] + partialSums[lane + stride];
+		}
 
-    workgroupBarrier();
-    stride = stride / 2u;
-  }
+		workgroupBarrier();
+		stride = stride / 2u;
+	}
 
-  if (lane == 0u) {
-    var value = partialSums[0] + bias[outputIndex];
-    if (params.applyRelu != 0u && value < 0.0) {
-      value = 0.0;
-    }
-    outputVec[outputIndex] = value;
-  }
+	if (lane == 0u) {
+		var value = partialSums[0] + bias[outputIndex];
+		if (params.applyRelu != 0u && value < 0.0) {
+			value = 0.0;
+		}
+		outputVec[outputIndex] = value;
+	}
 }
-

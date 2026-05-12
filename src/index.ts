@@ -1,26 +1,27 @@
-import 'dotenv/config'
+import 'dotenv/config';
+import https from 'node:https';
+import { buildServer } from './server.js';
+import { warmupGpu } from './gpu/device.js';
 
-import { buildServer } from './server.js'
-import { warmupGpu } from './gpu/device.js'
-
-const PORT = Number(process.env.PORT) || 3000
-const HOST = process.env.HOST || '0.0.0.0'
+const PORT = Number(process.env.PORT) || 3000;
+const HOST = process.env.HOST || '0.0.0.0';
 
 async function main() {
-  const server = await buildServer()
+	const server = await buildServer();
 
-  try {
-    await server.listen({ port: PORT, host: HOST })
-    console.log(`\n🚀 Server running at http://${HOST}:${PORT}`)
-    console.log(`📖 Swagger UI:   http://localhost:${PORT}/docs`)
-    console.log(`❤️  Health:       http://localhost:${PORT}/health\n`)
+	const protocol = server.server instanceof https.Server ? 'https' : 'http';
 
-    // Eagerly claim GPU so first request doesn't pay init cost
-    await warmupGpu()
-  } catch (err) {
-    server.log.error(err)
-    process.exit(1)
-  }
+	try {
+		await server.listen({ port: PORT, host: HOST });
+		console.log(`\n🚀 Server running at ${protocol}://${HOST}:${PORT}`);
+		console.log(`📖 Swagger UI:   ${protocol}://localhost:${PORT}/docs`);
+		console.log(`❤️  Health:       ${protocol}://localhost:${PORT}/health\n`);
+
+		await warmupGpu();
+	} catch (err) {
+		server.log.error(err);
+		process.exit(1);
+	}
 }
 
-main()
+main().catch(console.error);

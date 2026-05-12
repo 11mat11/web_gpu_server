@@ -130,4 +130,3 @@ Przyklady kodow:
 - `ai_load_failed`, `ai_predict_failed`, `ai_unload_failed`.
 
 To upraszcza diagnostyke i pozwala utrzymac spojny kontrakt API.
-

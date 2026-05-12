@@ -1,164 +1,156 @@
-import type { FastifyInstance } from 'fastify'
-import { z } from 'zod'
+import type { FastifyInstance } from 'fastify';
+import { z } from 'zod';
 
-import { renderSceneWebGpuCompute, renderSceneWebGpuRender } from '../gpu/render-runner.js'
-import { generateScene } from '../render/scene.js'
-import { getCudaRuntimeState, renderSceneCuda } from '../cuda/cudaBackend.js'
-
-const BackendSchema = z.enum(['webgpu-render', 'webgpu-compute', 'cuda'])
-  .describe('Backend renderowania sceny SDF (render pipeline vs compute vs CUDA).')
-  .example('webgpu-render')
-const MemorySchema = z
-  .object({
-    gpuBytes: z.number().nullable().describe('Suma bajtów GPUBuffer utworzonych w żądaniu.').example(67108864),
-    hostBytes: z.number().nullable().describe('Suma bajtów buforów Buffer/ArrayBuffer utworzonych w żądaniu.').example(33554432),
-    serverRssBytes: z.number().describe('process.memoryUsage().rss po zakończeniu obliczeń.').example(123456789),
-  })
-  .describe('Ujednolicony raport pamięci dla żądania obliczeniowego.')
-  .example({ gpuBytes: 67108864, hostBytes: 33554432, serverRssBytes: 123456789 })
+import { renderSceneWebGpuCompute, renderSceneWebGpuRender } from '../gpu/render-runner.js';
+import { generateScene } from '../render/scene.js';
+import { getCudaRuntimeState, renderSceneCuda } from '../cuda/cudaBackend.js';
+type WithMemory = { memory: { gpuAllocatedBytes: number } };
+type WithGpuBytes = { gpuMemoryBytes: number };
+const BackendSchema = z
+	.enum(['webgpu-render', 'webgpu-compute', 'cuda'])
+	.describe('Backend renderowania sceny SDF (render pipeline vs compute vs CUDA).')
+	.example('webgpu-render');
 
 const RenderBodySchema = z
-  .object({
-    seed: z
-      .number()
-      .int()
-      .nonnegative()
-      .default(0)
-      .describe('Deterministyczny seed generatora sceny.')
-      .example(1234),
-    count: z
-      .number()
-      .int()
-      .min(1)
-      .describe('Liczba obiektów SDF w scenie.')
-      .example(2000),
-    backend: BackendSchema.default('webgpu-render')
-      .describe('Wybrany backend renderowania.')
-      .example('webgpu-render'),
-  })
-  .describe('Parametry renderowania sceny do benchmarku.')
-  .example({ seed: 1234, count: 2000, backend: 'webgpu-render' })
+	.object({
+		seed: z
+			.number()
+			.int()
+			.nonnegative()
+			.default(0)
+			.describe('Deterministyczny seed generatora sceny.')
+			.example(1234),
+		count: z.number().int().min(1).describe('Liczba obiektów SDF w scenie.').example(2000),
+		backend: BackendSchema.default('webgpu-render')
+			.describe('Wybrany backend renderowania.')
+			.example('webgpu-render'),
+	})
+	.describe('Parametry renderowania sceny do benchmarku.')
+	.example({ seed: 1234, count: 2000, backend: 'webgpu-render' });
 
 function asBase64(buffer: Buffer): string {
-  return buffer.toString('base64')
+	return buffer.toString('base64');
 }
 
-/**
- * Benchmark renderowania sceny SDF (WebGPU render/compute lub CUDA).
- */
 export async function renderRoute(server: FastifyInstance) {
-  server.post(
-    '/',
-    {
-      schema: {
-        tags: ['render'],
-        summary: 'Procedural SDF scene renderer (WebGPU render/compute or CUDA)',
-        body: {
-          type: 'object',
-          required: ['seed', 'count', 'backend'],
-          properties: {
-            seed: { type: 'number', description: 'Deterministic scene seed (LCG)' },
-            count: { type: 'number', description: 'Number of shapes to generate' },
-            backend: { type: 'string', enum: ['webgpu-render', 'webgpu-compute', 'cuda'] },
-          },
-          examples: [
-            { seed: 1234, count: 2000, backend: 'webgpu-render' },
-            { seed: 1234, count: 2000, backend: 'webgpu-compute' },
-            { seed: 1234, count: 2000, backend: 'cuda' },
-          ],
-        },
-        response: {
-          200: {
-            type: 'object',
-            properties: {
-              backend: { type: 'string', enum: ['webgpu-render', 'webgpu-compute', 'cuda'] },
-              width: { type: 'number' },
-              height: { type: 'number' },
-              format: { type: 'string', enum: ['rgba'] },
-              imageBase64: { type: 'string' },
-              gpuDurationMs: { type: 'number' },
-              backendDurationMs: { type: 'number' },
-              serverDurationMs: { type: 'number' },
-              timingSource: { type: 'string', enum: ['gpu-timestamp', 'cpu-clock'] },
-              memory: {
-                type: 'object',
-                description: 'Ujednolicony raport pamięci dla żądania obliczeniowego.',
-                properties: {
-                  gpuBytes: { type: ['number', 'null'] },
-                  hostBytes: { type: ['number', 'null'] },
-                  serverRssBytes: { type: 'number' },
-                },
-              },
-            },
-          },
-          400: {
-            type: 'object',
-            properties: { error: { type: 'string' }, message: { type: 'string' } },
-          },
-          500: {
-            type: 'object',
-            properties: { error: { type: 'string' }, message: { type: 'string' } },
-          },
-        },
-      },
-    },
-    async (req, reply) => {
-      const parsed = RenderBodySchema.safeParse(req.body)
-      if (!parsed.success) {
-        return reply.code(400).send({
-          error: 'invalid_input',
-          message: 'Body must contain seed, count (>=1) and backend (webgpu-render|webgpu-compute|cuda).',
-        })
-      }
+	server.post(
+		'/',
+		{
+			schema: {
+				tags: ['render'],
+				summary: 'Procedural SDF scene renderer (WebGPU render/compute or CUDA)',
+				body: {
+					type: 'object',
+					required: ['seed', 'count', 'backend'],
+					properties: {
+						seed: { type: 'number', description: 'Deterministic scene seed (LCG)' },
+						count: { type: 'number', description: 'Number of shapes to generate' },
+						backend: { type: 'string', enum: ['webgpu-render', 'webgpu-compute', 'cuda'] },
+					},
+					examples: [
+						{ seed: 1234, count: 2000, backend: 'webgpu-render' },
+						{ seed: 1234, count: 2000, backend: 'webgpu-compute' },
+						{ seed: 1234, count: 2000, backend: 'cuda' },
+					],
+				},
+				response: {
+					200: {
+						type: 'object',
+						properties: {
+							backend: { type: 'string', enum: ['webgpu-render', 'webgpu-compute', 'cuda'] },
+							width: { type: 'number' },
+							height: { type: 'number' },
+							format: { type: 'string', enum: ['rgba'] },
+							imageBase64: { type: 'string' },
+							gpuDurationMs: { type: 'number' },
+							backendDurationMs: { type: 'number' },
+							serverDurationMs: { type: 'number' },
+							timingSource: { type: 'string', enum: ['gpu-timestamp', 'cpu-clock'] },
+							memory: {
+								type: 'object',
+								description: 'Ujednolicony raport pamięci dla żądania obliczeniowego.',
+								properties: {
+									gpuBytes: { type: ['number', 'null'] },
+									hostBytes: { type: ['number', 'null'] },
+									serverRssBytes: { type: 'number' },
+								},
+							},
+						},
+					},
+					400: {
+						type: 'object',
+						properties: { error: { type: 'string' }, message: { type: 'string' } },
+					},
+					500: {
+						type: 'object',
+						properties: { error: { type: 'string' }, message: { type: 'string' } },
+					},
+				},
+			},
+		},
+		async (req, reply) => {
+			const parsed = RenderBodySchema.safeParse(req.body);
+			if (!parsed.success) {
+				return reply.code(400).send({
+					error: 'invalid_input',
+					message:
+						'Body must contain seed, count (>=1) and backend (webgpu-render|webgpu-compute|cuda).',
+				});
+			}
 
-      const startedAt = performance.now()
+			const startedAt = performance.now();
 
-      try {
-        const { seed, count, backend } = parsed.data
-        const shapes = generateScene(seed, count)
+			try {
+				const { seed, count, backend } = parsed.data;
+				const shapes = generateScene(seed, count);
 
-        let result: any
+				let result:
+					| Awaited<ReturnType<typeof renderSceneWebGpuRender>>
+					| Awaited<ReturnType<typeof renderSceneCuda>>;
 
-        if (backend === 'webgpu-render') {
-          result = await renderSceneWebGpuRender(shapes, count)
-        } else if (backend === 'webgpu-compute') {
-          result = await renderSceneWebGpuCompute(shapes, count)
-        } else {
-          const cudaState = getCudaRuntimeState()
-          if (!cudaState.enabled) {
-            return reply.code(400).send({
-              error: 'cuda_unavailable',
-              message: `CUDA backend is unavailable on this host: ${cudaState.reason}. Use backend=webgpu-render or backend=webgpu-compute.`,
-            })
-          }
-          result = await renderSceneCuda(shapes, count)
-        }
+				if (backend === 'webgpu-render') {
+					result = await renderSceneWebGpuRender(shapes, count);
+				} else if (backend === 'webgpu-compute') {
+					result = await renderSceneWebGpuCompute(shapes, count);
+				} else {
+					const cudaState = getCudaRuntimeState();
+					if (!cudaState.enabled) {
+						return reply.code(400).send({
+							error: 'cuda_unavailable',
+							message: `CUDA backend is unavailable on this host: ${cudaState.reason}. Use backend=webgpu-render or backend=webgpu-compute.`,
+						});
+					}
+					result = await renderSceneCuda(shapes, count);
+				}
 
-        const serverDurationMs = performance.now() - startedAt
-        const memory: z.infer<typeof MemorySchema> = {
-          gpuBytes: 'memory' in result ? result.memory.gpuAllocatedBytes : result.gpuMemoryBytes,
-          hostBytes: shapes.byteLength + result.rgba.byteLength,
-          serverRssBytes: process.memoryUsage().rss,
-        }
+				const serverDurationMs = performance.now() - startedAt;
+				const memory = {
+					gpuBytes:
+						'memory' in result
+							? (result as WithMemory).memory.gpuAllocatedBytes
+							: (result as WithGpuBytes).gpuMemoryBytes,
+					hostBytes: shapes.byteLength + result.rgba.byteLength,
+					serverRssBytes: process.memoryUsage().rss,
+				};
 
-        return reply.send({
-          backend,
-          width: result.width,
-          height: result.height,
-          format: 'rgba',
-          imageBase64: asBase64(result.rgba),
-          gpuDurationMs: Number(result.gpuDurationMs.toFixed(3)),
-          backendDurationMs: Number(result.backendDurationMs.toFixed(3)),
-          serverDurationMs: Number(serverDurationMs.toFixed(3)),
-          timingSource: result.timingSource,
-          memory,
-        })
-      } catch (error) {
-        return reply.code(500).send({
-          error: 'render_failed',
-          message: error instanceof Error ? error.message : 'Failed to render scene.',
-        })
-      }
-    },
-  )
+				return reply.send({
+					backend,
+					width: result.width,
+					height: result.height,
+					format: 'rgba',
+					imageBase64: asBase64(result.rgba),
+					gpuDurationMs: Number(result.gpuDurationMs.toFixed(3)),
+					backendDurationMs: Number(result.backendDurationMs.toFixed(3)),
+					serverDurationMs: Number(serverDurationMs.toFixed(3)),
+					timingSource: result.timingSource,
+					memory,
+				});
+			} catch (error) {
+				return reply.code(500).send({
+					error: 'render_failed',
+					message: error instanceof Error ? error.message : 'Failed to render scene.',
+				});
+			}
+		},
+	);
 }
