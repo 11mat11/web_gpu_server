@@ -7,8 +7,8 @@ HeaderFilterRegex: '.*'
 
 # Konfiguracja konkretnych reguł
 CheckOptions:
-  - key:             readability-identifier-naming.VariableCase
-    value:           camelBack
-  - key:             readability-identifier-naming.FunctionCase
-    value:           camelBack
+  - key: readability-identifier-naming.VariableCase
+    value: camelBack
+  - key: readability-identifier-naming.FunctionCase
+    value: camelBack
 ...

@@ -13,13 +13,13 @@ Swagger UI: `http://localhost:3000/docs`
 
 ## Instalacja
 
-1) Instalacja zależności:
+1. Instalacja zależności:
 
 ```bash
 npm install
 ```
 
-2) Utworzenie pliku środowiskowego `.env` na podstawie przykładu:
+2. Utworzenie pliku środowiskowego `.env` na podstawie przykładu:
 
 Linux/macOS:
 
@@ -33,7 +33,7 @@ Windows (PowerShell):
 Copy-Item .env.example .env
 ```
 
-3) Build i uruchomienie:
+3. Build i uruchomienie:
 
 ```bash
 npm run build
@@ -99,7 +99,7 @@ sudo apt-get install -y build-essential python3
 
 Zanim zainstalujesz CUDA, zainstaluj **własnościowe sterowniki NVIDIA**:
 
-- Ubuntu: *Software & Updates* → *Additional Drivers* → wybierz sterownik NVIDIA (proprietary) → zastosuj zmiany → restart.
+- Ubuntu: _Software & Updates_ → _Additional Drivers_ → wybierz sterownik NVIDIA (proprietary) → zastosuj zmiany → restart.
 
 Po restarcie sprawdź:
 
@@ -121,7 +121,7 @@ nvcc --version
 
 ### Budowanie projektu
 
-0) Skopiuj konfigurację środowiskową (jeśli jeszcze nie masz `.env`):
+0. Skopiuj konfigurację środowiskową (jeśli jeszcze nie masz `.env`):
 
 Linux/macOS:
 
@@ -135,13 +135,13 @@ Windows (PowerShell):
 Copy-Item .env.example .env
 ```
 
-1) Instalacja zależności (oraz kompilacja natywnego addonu przez `node-gyp`):
+1. Instalacja zależności (oraz kompilacja natywnego addonu przez `node-gyp`):
 
 ```bash
 npm install
 ```
 
-2) Build TypeScript + kopiowanie assetów do `dist/`:
+2. Build TypeScript + kopiowanie assetów do `dist/`:
 
 ```bash
 npm run build
@@ -213,20 +213,20 @@ Jeśli potrzebujesz uruchomić serwer bez watch, możesz też odpalić jednorazo
 
 ## Endpointy
 
-| Metoda | Ścieżka | Opis |
-| ------ | ------- | ---- |
-| GET | `/health` | Status serwera |
-| GET | `/gpu/info` | Diagnostyka WebGPU |
-| GET | `/gpu/stress` | Test obciążeniowy GPU |
-| POST | `/image/filter` | Filtrowanie obrazów |
-| POST | `/matrix/multiply` | Mnożenie macierzy (WebGPU/CUDA/CPU) |
-| GET | `/ai/status` | Status modeli AI i pamięci |
-| POST | `/ai/load` | Ładowanie modeli MLP/CNN |
-| POST | `/ai/predict/mlp` | Inferencja MLP |
-| POST | `/ai/predict/cnn` | Inferencja CNN (VGG) |
-| POST | `/ai/unload` | Zwalnianie zasobów AI |
-| POST | `/video/init` | Inicjalizacja potoku wideo |
-| POST | `/video/process` | Przetwarzanie klatek (Downscaling) |
-| POST | `/video/histogram` | Obliczanie histogramu wideo |
-| POST | `/video/unload` | Zamykanie potoku wideo |
-| POST | `/render` | Renderowanie scen SDF |
+| Metoda | Ścieżka            | Opis                                |
+| ------ | ------------------ | ----------------------------------- |
+| GET    | `/health`          | Status serwera                      |
+| GET    | `/gpu/info`        | Diagnostyka WebGPU                  |
+| GET    | `/gpu/stress`      | Test obciążeniowy GPU               |
+| POST   | `/image/filter`    | Filtrowanie obrazów                 |
+| POST   | `/matrix/multiply` | Mnożenie macierzy (WebGPU/CUDA/CPU) |
+| GET    | `/ai/status`       | Status modeli AI i pamięci          |
+| POST   | `/ai/load`         | Ładowanie modeli MLP/CNN            |
+| POST   | `/ai/predict/mlp`  | Inferencja MLP                      |
+| POST   | `/ai/predict/cnn`  | Inferencja CNN (VGG)                |
+| POST   | `/ai/unload`       | Zwalnianie zasobów AI               |
+| POST   | `/video/init`      | Inicjalizacja potoku wideo          |
+| POST   | `/video/process`   | Przetwarzanie klatek (Downscaling)  |
+| POST   | `/video/histogram` | Obliczanie histogramu wideo         |
+| POST   | `/video/unload`    | Zamykanie potoku wideo              |
+| POST   | `/render`          | Renderowanie scen SDF               |

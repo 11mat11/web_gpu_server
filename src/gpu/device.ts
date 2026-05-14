@@ -176,7 +176,7 @@ export async function getGpuAdapter(): Promise<GPUAdapter | null> {
 
 export async function getGpuDevice(): Promise<GPUDevice> {
 	if (_recoveryPromise) {
-		console.warn("[GPU] Oczekiwanie na reset sterownika Windows (TDR)...");
+		console.warn('[GPU] Oczekiwanie na reset sterownika Windows (TDR)...');
 		await _recoveryPromise;
 	}
 
@@ -199,10 +199,10 @@ export async function getGpuDevice(): Promise<GPUDevice> {
 		_gpu = null;
 		_initialized = false;
 
-		_recoveryPromise = new Promise(resolve => {
+		_recoveryPromise = new Promise((resolve) => {
 			setTimeout(() => {
 				_recoveryPromise = null;
-				console.log("[GPU] Przerwa na reset sterownika zakończona. Można próbować ponownie.");
+				console.log('[GPU] Przerwa na reset sterownika zakończona. Można próbować ponownie.');
 				resolve();
 			}, 5000);
 		});
