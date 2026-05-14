@@ -5,7 +5,7 @@
 #include <limits>
 #include <mutex>
 #include <stdexcept>
-
+#include <cmath>
 #include "cuda_worker.h"
 #include "matrix_kernels.h"
 
