@@ -230,3 +230,7 @@ Jeśli potrzebujesz uruchomić serwer bez watch, możesz też odpalić jednorazo
 | POST   | `/video/histogram` | Obliczanie histogramu wideo         |
 | POST   | `/video/unload`    | Zamykanie potoku wideo              |
 | POST   | `/render`          | Renderowanie scen SDF               |
+
+dodatkowo na linuxie 
+sudo apt-get install make
+build-essential
