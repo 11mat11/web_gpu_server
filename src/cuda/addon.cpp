@@ -511,11 +511,11 @@ void CudaMatrixWorker::Execute() {
 	hostAllocatedBytes_ =
 	    (request_.randomInput ? 0 : matrixBytes * 2) + (request_.readback ? matrixBytes : 0);
 
-	CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&dMatrixA_), matrixBytes));
+	CUDA_CHECK_THROW(cudaMallocManaged(reinterpret_cast<void**>(&dMatrixA_), matrixBytes));
 	gpuAllocatedBytes_ += matrixBytes;
-	CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&dMatrixB_), matrixBytes));
+	CUDA_CHECK_THROW(cudaMallocManaged(reinterpret_cast<void**>(&dMatrixB_), matrixBytes));
 	gpuAllocatedBytes_ += matrixBytes;
-	CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&dMatrixC_), matrixBytes));
+	CUDA_CHECK_THROW(cudaMallocManaged(reinterpret_cast<void**>(&dMatrixC_), matrixBytes));
 	gpuAllocatedBytes_ += matrixBytes;
 
 	if (request_.randomInput) {
@@ -670,11 +670,11 @@ class CudaGaussianBlurWorker final : public Napi::AsyncWorker {
 	cudaEvent_t stopEvent = nullptr;
 
 	try {
-	    CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&dInput_), imageBytes));
+	    CUDA_CHECK_THROW(cudaMallocManaged(reinterpret_cast<void**>(&dInput_), imageBytes));
 	    gpuAllocatedBytes_ += imageBytes;
-	    CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&dTemp_), imageBytes));
+	    CUDA_CHECK_THROW(cudaMallocManaged(reinterpret_cast<void**>(&dTemp_), imageBytes));
 	    gpuAllocatedBytes_ += imageBytes;
-	    CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&dOutput_), imageBytes));
+	    CUDA_CHECK_THROW(cudaMallocManaged(reinterpret_cast<void**>(&dOutput_), imageBytes));
 	    gpuAllocatedBytes_ += imageBytes;
 
 	    CUDA_CHECK_THROW(
@@ -786,34 +786,34 @@ class CudaMlpLoadWorker final : public Napi::AsyncWorker {
 
 	    gpuAllocatedBytes_ = 0;
 	    CUDA_CHECK_THROW(
-		cudaMalloc(reinterpret_cast<void**>(&gMlpModel.dW1), kMlpW1Count * sizeof(float)));
+		cudaMallocManaged(reinterpret_cast<void**>(&gMlpModel.dW1), kMlpW1Count * sizeof(float)));
 	    gpuAllocatedBytes_ += kMlpW1Count * sizeof(float);
 	    CUDA_CHECK_THROW(
-		cudaMalloc(reinterpret_cast<void**>(&gMlpModel.dB1), kMlpB1Count * sizeof(float)));
+		cudaMallocManaged(reinterpret_cast<void**>(&gMlpModel.dB1), kMlpB1Count * sizeof(float)));
 	    gpuAllocatedBytes_ += kMlpB1Count * sizeof(float);
 	    CUDA_CHECK_THROW(
-		cudaMalloc(reinterpret_cast<void**>(&gMlpModel.dW2), kMlpW2Count * sizeof(float)));
+		cudaMallocManaged(reinterpret_cast<void**>(&gMlpModel.dW2), kMlpW2Count * sizeof(float)));
 	    gpuAllocatedBytes_ += kMlpW2Count * sizeof(float);
 	    CUDA_CHECK_THROW(
-		cudaMalloc(reinterpret_cast<void**>(&gMlpModel.dB2), kMlpB2Count * sizeof(float)));
+		cudaMallocManaged(reinterpret_cast<void**>(&gMlpModel.dB2), kMlpB2Count * sizeof(float)));
 	    gpuAllocatedBytes_ += kMlpB2Count * sizeof(float);
 	    CUDA_CHECK_THROW(
-		cudaMalloc(reinterpret_cast<void**>(&gMlpModel.dW3), kMlpW3Count * sizeof(float)));
+		cudaMallocManaged(reinterpret_cast<void**>(&gMlpModel.dW3), kMlpW3Count * sizeof(float)));
 	    gpuAllocatedBytes_ += kMlpW3Count * sizeof(float);
 	    CUDA_CHECK_THROW(
-		cudaMalloc(reinterpret_cast<void**>(&gMlpModel.dB3), kMlpB3Count * sizeof(float)));
+		cudaMallocManaged(reinterpret_cast<void**>(&gMlpModel.dB3), kMlpB3Count * sizeof(float)));
 	    gpuAllocatedBytes_ += kMlpB3Count * sizeof(float);
 
-	    CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gMlpModel.dInput),
+	    CUDA_CHECK_THROW(cudaMallocManaged(reinterpret_cast<void**>(&gMlpModel.dInput),
 					kMlpInputSize * sizeof(float)));
 	    gpuAllocatedBytes_ += kMlpInputSize * sizeof(float);
-	    CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gMlpModel.dH1),
+	    CUDA_CHECK_THROW(cudaMallocManaged(reinterpret_cast<void**>(&gMlpModel.dH1),
 					kMlpHidden1Size * sizeof(float)));
 	    gpuAllocatedBytes_ += kMlpHidden1Size * sizeof(float);
-	    CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gMlpModel.dH2),
+	    CUDA_CHECK_THROW(cudaMallocManaged(reinterpret_cast<void**>(&gMlpModel.dH2),
 					kMlpHidden2Size * sizeof(float)));
 	    gpuAllocatedBytes_ += kMlpHidden2Size * sizeof(float);
-	    CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gMlpModel.dOut),
+	    CUDA_CHECK_THROW(cudaMallocManaged(reinterpret_cast<void**>(&gMlpModel.dOut),
 					kMlpOutputSize * sizeof(float)));
 	    gpuAllocatedBytes_ += kMlpOutputSize * sizeof(float);
 
@@ -1025,97 +1025,97 @@ class CudaCnnLoadWorker final : public Napi::AsyncWorker {
 	    FreeCnnModelLocked();
 
 	    gpuAllocatedBytes_ = 0;
-	    CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dConv1W),
+	    CUDA_CHECK_THROW(cudaMallocManaged(reinterpret_cast<void**>(&gCnnModel.dConv1W),
 					kCnnConv1WCount * sizeof(float)));
 	    gpuAllocatedBytes_ += kCnnConv1WCount * sizeof(float);
-	    CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dConv1B),
+	    CUDA_CHECK_THROW(cudaMallocManaged(reinterpret_cast<void**>(&gCnnModel.dConv1B),
 					kCnnConv1BCount * sizeof(float)));
 	    gpuAllocatedBytes_ += kCnnConv1BCount * sizeof(float);
-	    CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dConv2W),
+	    CUDA_CHECK_THROW(cudaMallocManaged(reinterpret_cast<void**>(&gCnnModel.dConv2W),
 					kCnnConv2WCount * sizeof(float)));
 	    gpuAllocatedBytes_ += kCnnConv2WCount * sizeof(float);
-	    CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dConv2B),
+	    CUDA_CHECK_THROW(cudaMallocManaged(reinterpret_cast<void**>(&gCnnModel.dConv2B),
 					kCnnConv2BCount * sizeof(float)));
 	    gpuAllocatedBytes_ += kCnnConv2BCount * sizeof(float);
-	    CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dConv3W),
+	    CUDA_CHECK_THROW(cudaMallocManaged(reinterpret_cast<void**>(&gCnnModel.dConv3W),
 					kCnnConv3WCount * sizeof(float)));
 	    gpuAllocatedBytes_ += kCnnConv3WCount * sizeof(float);
-	    CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dConv3B),
+	    CUDA_CHECK_THROW(cudaMallocManaged(reinterpret_cast<void**>(&gCnnModel.dConv3B),
 					kCnnConv3BCount * sizeof(float)));
 	    gpuAllocatedBytes_ += kCnnConv3BCount * sizeof(float);
-	    CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dConv4W),
+	    CUDA_CHECK_THROW(cudaMallocManaged(reinterpret_cast<void**>(&gCnnModel.dConv4W),
 					kCnnConv4WCount * sizeof(float)));
 	    gpuAllocatedBytes_ += kCnnConv4WCount * sizeof(float);
-	    CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dConv4B),
+	    CUDA_CHECK_THROW(cudaMallocManaged(reinterpret_cast<void**>(&gCnnModel.dConv4B),
 					kCnnConv4BCount * sizeof(float)));
 	    gpuAllocatedBytes_ += kCnnConv4BCount * sizeof(float);
-	    CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dDense1W),
+	    CUDA_CHECK_THROW(cudaMallocManaged(reinterpret_cast<void**>(&gCnnModel.dDense1W),
 					kCnnDense1WCount * sizeof(float)));
 	    gpuAllocatedBytes_ += kCnnDense1WCount * sizeof(float);
-	    CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dDense1B),
+	    CUDA_CHECK_THROW(cudaMallocManaged(reinterpret_cast<void**>(&gCnnModel.dDense1B),
 					kCnnDense1BCount * sizeof(float)));
 	    gpuAllocatedBytes_ += kCnnDense1BCount * sizeof(float);
-	    CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dDense2W),
+	    CUDA_CHECK_THROW(cudaMallocManaged(reinterpret_cast<void**>(&gCnnModel.dDense2W),
 					kCnnDense2WCount * sizeof(float)));
 	    gpuAllocatedBytes_ += kCnnDense2WCount * sizeof(float);
-	    CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dDense2B),
+	    CUDA_CHECK_THROW(cudaMallocManaged(reinterpret_cast<void**>(&gCnnModel.dDense2B),
 					kCnnDense2BCount * sizeof(float)));
 	    gpuAllocatedBytes_ += kCnnDense2BCount * sizeof(float);
 
-	    CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dInput),
+	    CUDA_CHECK_THROW(cudaMallocManaged(reinterpret_cast<void**>(&gCnnModel.dInput),
 					static_cast<size_t>(kCnnInputChannels) *
 					    static_cast<size_t>(kCnnInputHeight) *
 					    static_cast<size_t>(kCnnInputWidth) * sizeof(float)));
 	    gpuAllocatedBytes_ += static_cast<size_t>(kCnnInputChannels) *
 				  static_cast<size_t>(kCnnInputHeight) *
 				  static_cast<size_t>(kCnnInputWidth) * sizeof(float);
-	    CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dConv1Out),
+	    CUDA_CHECK_THROW(cudaMallocManaged(reinterpret_cast<void**>(&gCnnModel.dConv1Out),
 					static_cast<size_t>(kCnnConv1OutChannels) *
 					    static_cast<size_t>(kCnnInputHeight) *
 					    static_cast<size_t>(kCnnInputWidth) * sizeof(float)));
 	    gpuAllocatedBytes_ += static_cast<size_t>(kCnnConv1OutChannels) *
 				  static_cast<size_t>(kCnnInputHeight) *
 				  static_cast<size_t>(kCnnInputWidth) * sizeof(float);
-	    CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dPool1Out),
+	    CUDA_CHECK_THROW(cudaMallocManaged(reinterpret_cast<void**>(&gCnnModel.dPool1Out),
 					static_cast<size_t>(kCnnConv1OutChannels) *
 					    static_cast<size_t>(kCnnPool1Height) *
 					    static_cast<size_t>(kCnnPool1Width) * sizeof(float)));
 	    gpuAllocatedBytes_ += static_cast<size_t>(kCnnConv1OutChannels) *
 				  static_cast<size_t>(kCnnPool1Height) *
 				  static_cast<size_t>(kCnnPool1Width) * sizeof(float);
-	    CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dConv2Out),
+	    CUDA_CHECK_THROW(cudaMallocManaged(reinterpret_cast<void**>(&gCnnModel.dConv2Out),
 					static_cast<size_t>(kCnnConv2OutChannels) *
 					    static_cast<size_t>(kCnnPool1Height) *
 					    static_cast<size_t>(kCnnPool1Width) * sizeof(float)));
 	    gpuAllocatedBytes_ += static_cast<size_t>(kCnnConv2OutChannels) *
 				  static_cast<size_t>(kCnnPool1Height) *
 				  static_cast<size_t>(kCnnPool1Width) * sizeof(float);
-	    CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dPool2Out),
+	    CUDA_CHECK_THROW(cudaMallocManaged(reinterpret_cast<void**>(&gCnnModel.dPool2Out),
 					static_cast<size_t>(kCnnConv2OutChannels) *
 					    static_cast<size_t>(kCnnPool2Height) *
 					    static_cast<size_t>(kCnnPool2Width) * sizeof(float)));
 	    gpuAllocatedBytes_ += static_cast<size_t>(kCnnConv2OutChannels) *
 				  static_cast<size_t>(kCnnPool2Height) *
 				  static_cast<size_t>(kCnnPool2Width) * sizeof(float);
-	    CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dConv3Out),
+	    CUDA_CHECK_THROW(cudaMallocManaged(reinterpret_cast<void**>(&gCnnModel.dConv3Out),
 					static_cast<size_t>(kCnnConv3OutChannels) *
 					    static_cast<size_t>(kCnnPool2Height) *
 					    static_cast<size_t>(kCnnPool2Width) * sizeof(float)));
-	    CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dPool3Out),
+	    CUDA_CHECK_THROW(cudaMallocManaged(reinterpret_cast<void**>(&gCnnModel.dPool3Out),
 					static_cast<size_t>(kCnnConv3OutChannels) *
 					    static_cast<size_t>(kCnnPool3Height) *
 					    static_cast<size_t>(kCnnPool3Width) * sizeof(float)));
-	    CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dConv4Out),
+	    CUDA_CHECK_THROW(cudaMallocManaged(reinterpret_cast<void**>(&gCnnModel.dConv4Out),
 					static_cast<size_t>(kCnnConv4OutChannels) *
 					    static_cast<size_t>(kCnnPool3Height) *
 					    static_cast<size_t>(kCnnPool3Width) * sizeof(float)));
-	    CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dPool4Out),
+	    CUDA_CHECK_THROW(cudaMallocManaged(reinterpret_cast<void**>(&gCnnModel.dPool4Out),
 					static_cast<size_t>(kCnnConv4OutChannels) *
 					    static_cast<size_t>(kCnnPool4Height) *
 					    static_cast<size_t>(kCnnPool4Width) * sizeof(float)));
-	    CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dDense1Out),
+	    CUDA_CHECK_THROW(cudaMallocManaged(reinterpret_cast<void**>(&gCnnModel.dDense1Out),
 					static_cast<size_t>(kCnnDense1Out) * sizeof(float)));
-	    CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gCnnModel.dOut),
+	    CUDA_CHECK_THROW(cudaMallocManaged(reinterpret_cast<void**>(&gCnnModel.dOut),
 					static_cast<size_t>(kCnnOutputSize) * sizeof(float)));
 
 	    const float* cursor = weights_.data();
@@ -1413,8 +1413,8 @@ class CudaVideoInitWorker final : public Napi::AsyncWorker {
 	    const size_t dstBytes =
 		static_cast<size_t>(dstWidth_) * static_cast<size_t>(dstHeight_) * kVideoChannels;
 
-	    CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gVideoState.dInput), srcBytes));
-	    CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&gVideoState.dOutput), dstBytes));
+	    CUDA_CHECK_THROW(cudaMallocManaged(reinterpret_cast<void**>(&gVideoState.dInput), srcBytes));
+	    CUDA_CHECK_THROW(cudaMallocManaged(reinterpret_cast<void**>(&gVideoState.dOutput), dstBytes));
 
 	    gVideoState.loaded = true;
 	    gVideoState.gpuAllocatedBytes = srcBytes + dstBytes;
@@ -1596,10 +1596,10 @@ class CudaVideoHistogramWorker final : public Napi::AsyncWorker {
 	gpuMemoryBytes_ = 0;
 
 	try {
-	    CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&dInput), expectedInput));
+	    CUDA_CHECK_THROW(cudaMallocManaged(reinterpret_cast<void**>(&dInput), expectedInput));
 	    gpuMemoryBytes_ += expectedInput;
 	    CUDA_CHECK_THROW(
-		cudaMalloc(reinterpret_cast<void**>(&dHistogram),
+		cudaMallocManaged(reinterpret_cast<void**>(&dHistogram),
 			   static_cast<size_t>(kVideoHistogramBinCount) * sizeof(unsigned int)));
 	    gpuMemoryBytes_ += static_cast<size_t>(kVideoHistogramBinCount) * sizeof(unsigned int);
 
@@ -1760,8 +1760,8 @@ class CudaRenderSceneWorker final : public Napi::AsyncWorker {
 	unsigned char* dOutput = nullptr;
 
 	try {
-	    CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&dShapes), shapeBytes));
-	    CUDA_CHECK_THROW(cudaMalloc(reinterpret_cast<void**>(&dOutput), outputBytes));
+	    CUDA_CHECK_THROW(cudaMallocManaged(reinterpret_cast<void**>(&dShapes), shapeBytes));
+	    CUDA_CHECK_THROW(cudaMallocManaged(reinterpret_cast<void**>(&dOutput), outputBytes));
 
 	    CUDA_CHECK_THROW(
 		cudaMemcpy(dShapes, shapes_.data(), shapeBytes, cudaMemcpyHostToDevice));
