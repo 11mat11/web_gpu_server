@@ -4,7 +4,7 @@ let _gpu: GPU | null = null;
 let _adapter: GPUAdapter | null = null;
 let _device: GPUDevice | null = null;
 let _initialized = false;
-
+let _recoveryPromise: Promise<void> | null = null;
 interface WebGpuModule {
 	create: (flags?: string[]) => GPU;
 	globals: Record<string, unknown>;
@@ -136,7 +136,6 @@ export function getRequiredDeviceLimits(
 		maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
 	};
 
-	// Kluczowe dla wydajności i skalowania GPGPU
 	const computeLimits = [
 		'maxComputeWorkgroupStorageSize',
 		'maxComputeInvocationsPerWorkgroup',
@@ -176,6 +175,11 @@ export async function getGpuAdapter(): Promise<GPUAdapter | null> {
 // ─── Device ───────────────────────────────────────────────────────────────────
 
 export async function getGpuDevice(): Promise<GPUDevice> {
+	if (_recoveryPromise) {
+		console.warn("[GPU] Oczekiwanie na reset sterownika Windows (TDR)...");
+		await _recoveryPromise;
+	}
+
 	if (_device) return _device;
 
 	const adapter = await getGpuAdapter();
@@ -194,6 +198,14 @@ export async function getGpuDevice(): Promise<GPUDevice> {
 		_adapter = null;
 		_gpu = null;
 		_initialized = false;
+
+		_recoveryPromise = new Promise(resolve => {
+			setTimeout(() => {
+				_recoveryPromise = null;
+				console.log("[GPU] Przerwa na reset sterownika zakończona. Można próbować ponownie.");
+				resolve();
+			}, 5000);
+		});
 	});
 
 	return _device;
