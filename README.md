@@ -1,217 +1,127 @@
-# WebGPU Thesis Server
+# WebGPU & CUDA Thesis Server
 
 Serwer REST (Fastify, Node.js 25+, ES Modules) do porównywania wydajności **WebGPU** i **CUDA** w ramach pracy magisterskiej.
 
-Swagger UI: `http://localhost:3000/docs`
+Dokumentacja interfejsu (Swagger UI): `http://localhost:3000/docs`
+
+## Spis treści
+1. [Wymagania](#wymagania)
+2. [Konfiguracja Architektury GPU](#konfiguracja-architektury-gpu)
+3. [Instalacja](#instalacja)
+4. [Budowanie](#budowanie)
+5. [Uruchamianie](#uruchamianie)
+6. [Środowiska bez wsparcia C++ i CUDA](#środowiska-bez-wsparcia-c-i-cuda)
+7. [Zarządzanie Pamięcią i Rozwiązywanie Problemów](#zarządzanie-pamięcią-i-rozwiązywanie-problemów)
+8. [Struktura Projektu](#struktura-projektu)
+9. [Endpointy](#endpointy)
 
 ## Wymagania
 
 - **Node.js 25+**
-- GPU/sterowniki z obsługą **WebGPU** (headless; zwykle przez backend Vulkan/Metal/DX12 zależnie od platformy)
-- (Opcjonalnie, dla CUDA) **NVIDIA GPU + CUDA Toolkit**
-- (Opcjonalnie, dla budowania natywnego dodatku na Windows) **Visual Studio Build Tools** (C/C++)
+- Kompatybilny układ graficzny z obsługą **WebGPU** (działający w trybie headless, poprzez backend Vulkan/Metal/DX12).
+- **Python 3.x** – absolutnie wymagany przez `node-gyp` do kompilacji modułów natywnych.
+- Do pełnej obsługi ścieżek CUDA: **NVIDIA GPU** oraz zainstalowany **NVIDIA CUDA Toolkit**.
+
+## Konfiguracja Architektury GPU
+
+Przed przystąpieniem do kompilacji (`npm run build`) i właściwego operowania na danych, konieczne jest dostosowanie flag sprzętowych pod architekturę docelowej karty graficznej.
+
+W tym celu w pliku `binding.gyp` należy ustawić flagę `-arch=sm_XX` zgodną z układem z którego korzysta aplikacja. Tabela mapowania kluczowych architektur:
+
+| Rodzina GPU | Flaga architektury |
+|---|---|
+| RTX 40xx (np. 4050) | `sm_89` |
+| RTX 30xx | `sm_86` |
+| RTX 20xx / GTX 16xx | `sm_75` |
+| GTX 10xx | `sm_61` |
+
+Poprawna definicja architektury gwarantuje wygenerowanie optymalnego kodu natywnego (PTX/SASS) dla posiadanego akceleratora.
 
 ## Instalacja
 
-1. Instalacja zależności:
+Projekt wykorzystuje natywny dodatek C++/CUDA (`binding.gyp` → `cuda_matrix_addon.node`), który kompilowany jest podczas instalacji zależności.
 
+### Instalacja - Linux (Ubuntu)
+
+W przypadku systemów bare-metal (np. Ubuntu Dual-Boot), niezbędne jest uprzednie zainstalowanie własnościowych sterowników NVIDIA oraz narzędzi kompilacyjnych.
+
+1. Zainstaluj wymagane pakiety systemowe w jednym kroku:
+```bash
+sudo apt-get update && sudo apt-get install -y build-essential python3 make nvidia-cuda-toolkit
+```
+2. Pobierz zależności projektu (proces ten uruchomi kompilację kodu C++ przez `node-gyp`):
 ```bash
 npm install
 ```
 
-2. Utworzenie pliku środowiskowego `.env` na podstawie przykładu:
+### Instalacja - Windows
 
-Linux/macOS:
-
-```bash
-cp .env.example .env
-```
-
-Windows (PowerShell):
-
-```powershell
-Copy-Item .env.example .env
-```
-
-3. Build i uruchomienie:
-
-```bash
-npm run build
-npm run start
-```
-
-Domyślnie serwer startuje pod: `http://localhost:3000`
-
-## 🚀 Instalacja i Uruchomienie (Windows & Native Linux)
-
-Ta sekcja dotyczy środowisk, w których **natywny kod C++/CUDA jest kompilowany lokalnie** (w locie) przez **node-gyp**.
-
-Projekt zawiera natywny addon (`binding.gyp` → `cuda_matrix_addon.node`). W praktyce oznacza to, że **`npm install` może uruchomić kompilację C++/CUDA**. Jeżeli w systemie brakuje wymaganych narzędzi (kompilatora C++ i/lub CUDA Toolkit), instalacja zakończy się typowym „czerwonym” błędem kompilacji.
-
-### Wymagania wstępne (dla obu systemów)
-
-- **Node.js 25+**
-- **Python 3.x** — **wymóg absolutny** dla `node-gyp` (bez Pythona kompilacja addonu nie ruszy).
-
-Weryfikacja wersji:
-
-```bash
-node -v
-npm -v
-python --version
-```
-
-> Na części dystrybucji Linux polecenie może nazywać się `python3` zamiast `python`.
-
-### Konfiguracja — Windows
-
-#### Krok 1: Visual Studio Build Tools
-
-1. Zainstaluj **Visual Studio Build Tools**.
-2. W instalatorze zaznacz workload: **Desktop development with C++**.
-
-To zapewnia kompilator MSVC oraz narzędzia wymagane przez `node-gyp`.
-
-#### Krok 2: NVIDIA CUDA Toolkit
-
-1. Zainstaluj najnowszy **NVIDIA CUDA Toolkit** ze strony producenta.
-2. Upewnij się, że `nvcc` jest dostępny w systemie (lub że ustawiona jest zmienna `CUDA_PATH`).
-
-Szybka diagnostyka:
-
-```bash
-nvidia-smi
-nvcc --version
-```
-
-### Konfiguracja — Natywny Linux (np. Ubuntu Dual-Boot)
-
-Instrukcja dotyczy systemów **bare-metal (nie WSL2)**, gdzie sterowniki GPU i CUDA działają natywnie.
-
-#### Instalacja kompilatora i Pythona
-
-```bash
-sudo apt-get update
-sudo apt-get install -y build-essential python3
-```
-
-#### Krok kluczowy: własnościowe sterowniki NVIDIA
-
-Zanim zainstalujesz CUDA, zainstaluj **własnościowe sterowniki NVIDIA**:
-
-- Ubuntu: _Software & Updates_ → _Additional Drivers_ → wybierz sterownik NVIDIA (proprietary) → zastosuj zmiany → restart.
-
-Po restarcie sprawdź:
-
-```bash
-nvidia-smi
-```
-
-#### Instalacja CUDA Toolkit
-
-```bash
-sudo apt-get install -y nvidia-cuda-toolkit
-```
-
-Weryfikacja:
-
-```bash
-nvcc --version
-```
-
-### Budowanie projektu
-
-0. Skopiuj konfigurację środowiskową (jeśli jeszcze nie masz `.env`):
-
-Linux/macOS:
-
-```bash
-cp .env.example .env
-```
-
-Windows (PowerShell):
-
-```powershell
-Copy-Item .env.example .env
-```
-
-1. Instalacja zależności (oraz kompilacja natywnego addonu przez `node-gyp`):
-
+1. Zainstaluj **Visual Studio Build Tools** (wymagane obciążenie robocze: *Desktop development with C++*) w celu zapewnienia kompilatora MSVC niezbędnego dla `node-gyp`.
+2. Zainstaluj najnowszą wersję **NVIDIA CUDA Toolkit**. Upewnij się, że polecenie `nvcc` jest dostępne w zmiennych środowiskowych (lub ustawiona jest zmienna `CUDA_PATH`).
+3. Pobierz zależności projektu:
 ```bash
 npm install
 ```
 
-2. Build TypeScript + kopiowanie assetów do `dist/`:
+## Budowanie
 
+Po instalacji zależności należy stworzyć plik konfiguracyjny z dostępnego wzorca, a następnie zbudować projekt.
+
+1. Utworzenie pliku środowiskowego `.env`:
+   - Linux/macOS: `cp .env.example .env`
+   - Windows (PowerShell): `Copy-Item .env.example .env`
+2. Generowanie builda:
 ```bash
 npm run build
 ```
+Skrypt uruchamia kompilator TypeScript (`tsc`) i zapewnia przeniesienie zasobów niezbędnych w runtime (shadery **`.wgsl`** i pliki binarne **`.bin`**) ze ścieżek `src/` do `dist/`.
 
-Skrypt `build` wykonuje:
+## Uruchamianie
 
-- kompilację TypeScript (`tsc`),
-- kopiowanie shaderów **`.wgsl`** oraz plików binarnych **`.bin`** z `src/` do `dist/`.
+Aplikacja domyślnie startuje na porcie 3000 i udostępnia usługi pod adresem: `http://localhost:3000`
 
-### Uruchamianie
-
-Wersja produkcyjna (uruchamia pliki z `dist/`):
-
+- **Środowisko produkcyjne** (wymaga wcześniejszego wykonania `npm run build`):
 ```bash
 npm start
 ```
-
-Wersja developerska (watch / hot reload):
-
+- **Środowisko deweloperskie** (wspierające hot-reload za pośrednictwem biblioteki `tsx`):
 ```bash
 npm run dev
 ```
 
-> Uwaga: nawet jeśli CUDA nie jest dostępne w runtime, serwer nadal może działać na WebGPU/CPU dzięki auto-detekcji. Jeśli chcesz wymusić brak ścieżek CUDA, ustaw `CUDA_ENABLED=false` w `.env`.
+## Środowiska bez wsparcia C++ i CUDA
 
-## Uruchamianie bez CUDA (auto-detekcja)
+W sytuacji, gdy docelowe środowisko (np. laptop deweloperski) nie posiada karty graficznej z rodziny NVIDIA, albo w systemie brak pakietów C++ / CUDA Toolkit, aplikacja posiada zintegrowane mechanizmy fallbacku w celu bezproblemowej pracy na WebGPU lub CPU.
 
-Backend CUDA jest **opcjonalny**. Serwer potrafi działać dalej na WebGPU/CPU nawet jeśli CUDA nie jest dostępne.
+Działanie mechanizmu auto-detekcji środowiska:
+- Jeżeli w systemie wywołanie `nvidia-smi` kończy się błędem,
+- lub w repozytorium brak natywnego artefaktu kompilacji (np. `build/Release/cuda_matrix_addon.node`),
 
-Mechanizm auto-detekcji CUDA:
+to tryb sprzętowy CUDA automatycznie ustawi się w pozycję niedostępną. Endpointy celujące bezpośrednio w kernele CUDA zwrócą status błędu HTTP `400` z odpowiednim komunikatem.
 
-- sprawdza, czy da się uruchomić `nvidia-smi` (czyli czy jest wykrywalna karta NVIDIA), oraz
-- czy istnieje zbudowany natywny addon: `build/Release/cuda_matrix_addon.node` (lub `build/Debug/...`).
-
-Jeśli którykolwiek warunek nie jest spełniony, CUDA jest oznaczone jako niedostępne i endpointy wymagające CUDA powinny zwracać błąd walidacyjny/`400` (zależnie od trasy).
-
-Wymuszone wyłączenie CUDA:
-
-- ustaw w `.env`:
-
+Można również wyłączyć to jawnie z poziomu zmiennych konfiguracyjnych w pliku `.env`:
 ```ini
 CUDA_ENABLED=false
 ```
+Bez CUDA zarówno budowanie (`npm run build`), jak i dewelopment przebiegają standardowym cyklem.
 
-Nawet bez CUDA możesz uruchamiać serwer zarówno w trybie produkcyjnym, jak i developerskim:
+## Zarządzanie Pamięcią i Rozwiązywanie Problemów
 
-```bash
-npm start
-npm run dev
-```
+- **Zunifikowana pamięć (Unified Memory)**: Natywny kod C++ serwera zarządza pamięcią z wykorzystaniem mechanizmu `cudaMallocManaged`. Rozwiązanie to zabezpiecza aplikację przed nagłymi awariami procesów (crashami) wynikającymi ze zbyt obciążających alokacji. Gdy limit pamięci VRAM zostaje przekroczony, karta graficzna ma prawo wypożyczać na własne potrzeby zasoby ze standardowej pamięci operacyjnej RAM (page migration).
+- **Obsługa Timeout Detection and Recovery (TDR / Device Hung)**: W przypadkach skrajnego obciążenia układów graficznych może dochodzić do chwilowych blokad (Device Hung). Jeżeli system bazowy zrzuci proces CUDA na skutek interwencji TDR, logika w serwerze zarejestruje incydent, spróbuje bezpiecznie zwolnić kontekst i dokonać automatycznego ponownego nawiązania komunikacji z układem graficznym.
 
-## Struktura projektu (najważniejsze katalogi)
+## Struktura Projektu
 
-- `src/gpu/shaders/` – shadery **WebGPU** w formacie `.wgsl`
-- `dist/gpu/shaders/` – shadery **muszą znaleźć się po buildzie** (runtime Node.js ładuje je z katalogu `dist/`)
-- `src/cuda/` – kod C++/CUDA i warstwa integracji (m.in. `addon.cpp`, `matrix_kernels.cu`, wrapper TS)
-- `build/Release/` – artefakty natywnego addonu (`cuda_matrix_addon.node`) po kompilacji
+Architektura i organizacja kluczowych podkatalogów:
 
-## Skrypty
-
-Poniżej kluczowe skrypty (zgodne z `package.json`):
-
-- `dev`: `tsx watch src/index.ts`
-- `build`: `tsc && copyfiles -u 1 "src/**/*.wgsl" "src/**/*.bin" dist/`
-- `start`: `node dist/index.js`
-
-Jeśli potrzebujesz uruchomić serwer bez watch, możesz też odpalić jednorazowo: `tsx src/index.ts`.
+- `src/gpu/shaders/` – Shadery oparte na technologii **WebGPU** (pliki w standardzie `.wgsl`).
+- `dist/gpu/shaders/` – Skompilowany i przeniesiony kod shaderów; z tego katalogu Node.js ładuje je podczas pracy środowiska docelowego.
+- `src/cuda/` – Moduły C++/CUDA oraz niezbędna warstwa integracji (m.in. wrapper TypeScript, plik `addon.cpp`, kod kernelów `matrix_kernels.cu`).
+- `build/Release/` – Rezultat udanej pracy `node-gyp`; z tego miejsca po kompilacji ładowany jest binarny plik `.node` (artefakt wykonawczy).
 
 ## Endpointy
+
+Pełny wykaz tras API zaimplementowanych w kontrolerach Fastify:
 
 | Metoda | Ścieżka            | Opis                                |
 | ------ | ------------------ | ----------------------------------- |
@@ -230,7 +140,3 @@ Jeśli potrzebujesz uruchomić serwer bez watch, możesz też odpalić jednorazo
 | POST   | `/video/histogram` | Obliczanie histogramu wideo         |
 | POST   | `/video/unload`    | Zamykanie potoku wideo              |
 | POST   | `/render`          | Renderowanie scen SDF               |
-
-dodatkowo na linuxie 
-sudo apt-get install make
-build-essential
