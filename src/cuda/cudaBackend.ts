@@ -103,6 +103,7 @@ type NativeCudaAddon = {
 	unloadVideoPipeline: () => Promise<NativeMlpUnloadResult>;
 	renderScene: (params: Record<string, unknown>) => Promise<NativeRenderSceneResult>;
 	gaussianBlurCuda: (params: Record<string, unknown>) => Promise<NativeGaussianBlurResult>;
+	resetDevice: () => boolean;
 };
 
 export interface MultiplyMatrixCudaParams {
@@ -513,4 +514,9 @@ export async function gaussianBlurCuda(
 		timingSource: result.timingSource,
 		memory: result.memory,
 	};
+}
+
+export function resetDeviceCuda(): boolean {
+	const addon = getAddon();
+	return addon.resetDevice();
 }

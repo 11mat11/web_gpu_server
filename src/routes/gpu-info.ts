@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { getGpuAdapter, getGpuDevice, getAdapterInfo, serializeGpuLimits } from '../gpu/device.js';
+import { resetDeviceCuda, getCudaRuntimeState } from '../cuda/cudaBackend.js';
 
 const errorResponseSchema = {
 	type: 'object',
@@ -231,6 +232,59 @@ export async function gpuInfoRoute(server: FastifyInstance) {
 					},
 				});
 			}
+		},
+	);
+
+	server.delete(
+		'/reset',
+		{
+			schema: {
+				tags: ['system'],
+				summary: 'Force GPU device reset and free VRAM/RAM (cudaDeviceReset)',
+				response: {
+					200: {
+						type: 'object',
+						properties: {
+							status: { type: 'string' },
+							message: { type: 'string' },
+						},
+					},
+					400: errorResponseSchema,
+					500: errorResponseSchema,
+				},
+			},
+		},
+		async (_req, reply) => {
+			const messages: string[] = [];
+
+			if (typeof global.gc === 'function') {
+				global.gc();
+				messages.push('Wymuszono V8 Garbage Collection (WebGPU buffers cleared).');
+			} else {
+				server.log.warn('Flaga --expose-gc nie jest włączona! Pamięć WebGPU może wyciekać.');
+				messages.push('Flaga --expose-gc nie jest włączona! Pamięć WebGPU może wyciekać.');
+			}
+
+			const state = getCudaRuntimeState();
+			if (state.enabled) {
+				try {
+					resetDeviceCuda();
+					messages.push('Kontekst CUDA został zniszczony.');
+				} catch (err) {
+					server.log.error(err);
+					return reply.code(500).send({
+						error: 'RESET_FAILED',
+						message: String(err),
+					});
+				}
+			} else {
+				messages.push(`Kontekst CUDA pominięty (${state.reason}).`);
+			}
+
+			return reply.code(200).send({
+				status: 'success',
+				message: messages.join(' '),
+			});
 		},
 	);
 }

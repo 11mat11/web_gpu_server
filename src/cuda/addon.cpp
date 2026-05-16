@@ -8,6 +8,7 @@
 #include <cmath>
 #include "cuda_worker.h"
 #include "matrix_kernels.h"
+#include <cuda_runtime.h>
 
 namespace {
 
@@ -2088,6 +2089,20 @@ Napi::Value GaussianBlurCuda(const Napi::CallbackInfo& info) {
     }
 }
 
+Napi::Value ResetDevice(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    
+    cudaError_t status = cudaDeviceReset();
+    
+    if (status != cudaSuccess) {
+        std::string errMsg = std::string("Nie udało się zresetować GPU: ") + cudaGetErrorString(status);
+        Napi::Error::New(env, errMsg).ThrowAsJavaScriptException();
+        return env.Undefined();
+    }
+    
+    return Napi::Boolean::New(env, true);
+}
+
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
     exports.Set("multiplyMatrixCuda", Napi::Function::New(env, MultiplyMatrixCuda));
     exports.Set("loadModel", Napi::Function::New(env, LoadModel));
@@ -2102,6 +2117,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
     exports.Set("unloadVideoPipeline", Napi::Function::New(env, UnloadVideoPipeline));
     exports.Set("renderScene", Napi::Function::New(env, RenderScene));
     exports.Set("gaussianBlurCuda", Napi::Function::New(env, GaussianBlurCuda));
+    exports.Set("resetDevice", Napi::Function::New(env, ResetDevice));
     return exports;
 }
 

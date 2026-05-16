@@ -4,9 +4,9 @@
 	"description": "WebGPU performance analysis in Node.js - REST API server",
 	"main": "dist/index.js",
 	"scripts": {
-		"dev": "tsx watch src/index.ts",
+		"dev": "NODE_OPTIONS=\"--max-old-space-size=16384 --expose-gc\" tsx watch src/index.ts",
 		"build": "tsc && copyfiles -u 1 \"src/**/*.wgsl\" \"src/**/*.bin\" dist/",
-		"start": "node dist/index.js",
+		"start": "NODE_OPTIONS=\"--max-old-space-size=16384 --expose-gc\" node dist/index.js",
 		"lint": "eslint src --ext .ts",
 		"format": "prettier --write .",
 		"test": "vitest run",
