@@ -199,6 +199,11 @@ export async function getGpuDevice(): Promise<GPUDevice> {
 		_gpu = null;
 		_initialized = false;
 
+		if (info.reason === 'destroyed') {
+			console.log('[GPU] Urządzenie zniszczone celowo. Pomijam opóźnienie recovery.');
+			return;
+		}
+
 		_recoveryPromise = new Promise((resolve) => {
 			setTimeout(() => {
 				_recoveryPromise = null;
@@ -236,7 +241,6 @@ export async function createDedicatedGpuDevice(
 		return device;
 	} catch (err) {
 		console.error(`[GPU] ✗ Failed to create dedicated device:`, err);
-		// Reset adapter on failure — it may be in bad state
 		if (String(err).includes('consumed')) {
 			console.warn(`[GPU] Adapter appears consumed, resetting singletons...`);
 			_adapter = null;
