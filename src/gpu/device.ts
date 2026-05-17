@@ -266,3 +266,16 @@ export async function warmupGpu(): Promise<void> {
 		console.warn('[GPU] ⚠️  Warmup failed (server will still start):', err);
 	}
 }
+
+// ─── Reset ────────────────────────────────────────────────────────────────────
+
+export function resetGlobalGpuDevice(): void {
+	if (_device) {
+		_device.destroy();
+	}
+	_device = null;
+	_adapter = null;
+	_gpu = null;
+	_initialized = false;
+	console.log('[GPU] Global WebGPU context destroyed and singletons reset.');
+}

@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { getGpuAdapter, getGpuDevice, getAdapterInfo, serializeGpuLimits } from '../gpu/device.js';
+import { getGpuAdapter, getGpuDevice, getAdapterInfo, serializeGpuLimits, resetGlobalGpuDevice } from '../gpu/device.js';
 import { resetDeviceCuda, getCudaRuntimeState } from '../cuda/cudaBackend.js';
 
 const errorResponseSchema = {
@@ -264,6 +264,9 @@ export async function gpuInfoRoute(server: FastifyInstance) {
 				server.log.warn('Flaga --expose-gc nie jest włączona! Pamięć WebGPU może wyciekać.');
 				messages.push('Flaga --expose-gc nie jest włączona! Pamięć WebGPU może wyciekać.');
 			}
+			
+			resetGlobalGpuDevice();
+			messages.push('Globalny kontekst WebGPU został zniszczony.');
 
 			const state = getCudaRuntimeState();
 			if (state.enabled) {
